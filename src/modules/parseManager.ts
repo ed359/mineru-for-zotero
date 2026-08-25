@@ -561,6 +561,9 @@ async function getSelectedPDFAttachment(): Promise<Zotero.Item | null> {
 
 export async function getSelectedParseContext(): Promise<ItemParseContext | null> {
   const pane = Zotero.getActiveZoteroPane();
+  if (!pane) {
+    return null;
+  }
   const items = pane.getSelectedItems();
   for (const item of items) {
     const context = await getItemParseContext(item);

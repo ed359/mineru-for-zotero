@@ -602,7 +602,7 @@ async function removePath(path: string): Promise<void> {
 async function readDir(path: string): Promise<string[]> {
   if (hasIOUtils()) {
     const children = await IOUtils.getChildren(toNativePath(path));
-    return children.map((child) => basename(child));
+    return children.map((child) => basename(child)).sort();
   }
 
   const names: string[] = [];
@@ -616,7 +616,7 @@ async function readDir(path: string): Promise<string[]> {
   } finally {
     iterator.close();
   }
-  return names;
+  return names.sort();
 }
 
 async function openFolder(path: string): Promise<void> {
