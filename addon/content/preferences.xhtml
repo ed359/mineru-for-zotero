@@ -144,6 +144,44 @@
   </vbox>
   <vbox>
     <label>
+      <html:h2 data-l10n-id="pref-sync-title"></html:h2>
+    </label>
+    <vbox>
+      <checkbox
+        id="zotero-prefpane-__addonRef__-sync-parse-results"
+        data-l10n-id="pref-sync-parse-results"
+        native="true"
+        preference="syncParseResults"
+      />
+      <html:div
+        data-l10n-id="pref-sync-parse-results-help"
+        style="margin-left: 24px"
+      ></html:div>
+    </vbox>
+    <vbox>
+      <checkbox
+        id="zotero-prefpane-__addonRef__-sync-include-images"
+        data-l10n-id="pref-sync-include-images"
+        native="true"
+        preference="syncIncludeImages"
+      />
+      <html:div
+        data-l10n-id="pref-sync-include-images-help"
+        style="margin-left: 24px"
+      ></html:div>
+    </vbox>
+    <vbox>
+      <hbox>
+        <html:button
+          id="__addonRef__-migrate-existing-results"
+          data-l10n-id="pref-migrate-existing-results"
+        ></html:button>
+      </hbox>
+      <html:div id="__addonRef__-migrate-existing-results-status"></html:div>
+    </vbox>
+  </vbox>
+  <vbox>
+    <label>
       <html:h2 data-l10n-id="pref-about-title"></html:h2>
     </label>
     <html:label

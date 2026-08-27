@@ -14,6 +14,21 @@ describe("storage", function () {
     );
   });
 
+  it("resolves the attachment directory to a real filesystem path", function () {
+    const storage = createStorage(rootDir);
+
+    const resolved = storage.getResolvedAttachmentDir({
+      libraryID: 12,
+      key: "ABC123",
+    });
+
+    assert.equal(
+      resolved,
+      resolveTmpPath("TmpD/mineru-copy/attachments/12-ABC123"),
+    );
+    assert.notInclude(resolved, "TmpD/");
+  });
+
   it("writes and reads ready result", async function () {
     const storage = createStorage(rootDir);
 

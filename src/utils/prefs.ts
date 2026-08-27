@@ -181,6 +181,29 @@ export function setSaveImages(value: boolean) {
 }
 
 /**
+ * 读取是否将解析结果同步到 Zotero（通过 Zotero 自身的数据/文件同步）。
+ */
+export function getSyncParseResults(): boolean {
+  const value = getPref("syncParseResults");
+  return value !== false;
+}
+
+export function setSyncParseResults(value: boolean) {
+  return setPref("syncParseResults", value);
+}
+
+/**
+ * 读取同步内容是否包含提取出的图片，默认关闭以节省存储配额。
+ */
+export function getSyncIncludeImages(): boolean {
+  return getPref("syncIncludeImages") === true;
+}
+
+export function setSyncIncludeImages(value: boolean) {
+  return setPref("syncIncludeImages", value);
+}
+
+/**
  * 将字节数组编码为 URL-safe token。
  */
 function bytesToUrlToken(bytes: Uint8Array): string {

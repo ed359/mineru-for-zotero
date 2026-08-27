@@ -28,6 +28,7 @@ class Addon {
     itemTreeColumn?: ItemTreeColumnState;
     readerOverlays?: Map<ReaderOverlayKey, ReaderOverlayState>;
     readerToolbar?: ReaderToolbarRegistration;
+    zoteroSyncObserverID?: string;
     dialog?: DialogHelper;
   };
   // Lifecycle hooks

@@ -8,12 +8,21 @@ import {
   registerItemTreeColumn,
   unregisterItemTreeColumn,
 } from "./modules/itemTreeColumn";
-import { registerPrefsScripts } from "./modules/preferenceScript";
+import {
+  getMinerUStorageRoot,
+  registerPrefsScripts,
+} from "./modules/preferenceScript";
 import { destroyAllReaderOverlays } from "./modules/readerOverlay";
 import {
   registerReaderToolbar,
   unregisterReaderToolbar,
 } from "./modules/readerToolbar";
+import { createStorage } from "./modules/storage";
+import {
+  reconcileZoteroSync,
+  registerZoteroSyncObserver,
+  unregisterZoteroSyncObserver,
+} from "./modules/zoteroSync";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -27,6 +36,10 @@ async function onStartup() {
 
   registerPreferencePane();
   registerMarkdownQueryApiEndpoint();
+  const zoteroSyncStorage = createStorage(getMinerUStorageRoot());
+  addon.data.zoteroSyncObserverID =
+    registerZoteroSyncObserver(zoteroSyncStorage);
+  void reconcileZoteroSync(zoteroSyncStorage);
 
   await Promise.all(
     Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
@@ -94,6 +107,10 @@ function onShutdown(): void {
   unregisterMarkdownQueryApiEndpoint();
   destroyAllReaderOverlays();
   unregisterItemTreeColumn();
+  if (addon.data.zoteroSyncObserverID) {
+    unregisterZoteroSyncObserver(addon.data.zoteroSyncObserverID);
+    addon.data.zoteroSyncObserverID = undefined;
+  }
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
   // Remove addon object
