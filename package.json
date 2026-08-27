@@ -1,7 +1,7 @@
 {
   "name": "mineru-for-zotero",
   "type": "module",
-  "version": "10.0.0",
+  "version": "10.0.1",
   "description": "Parse PDFs with MinerU, show MinerU layout boxes on PDFs, and copy structured content from Zotero Reader",
   "config": {
     "addonName": "MinerU for Zotero",
@@ -12,13 +12,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Asianfleet/mineru-for-zotero.git"
+    "url": "git+https://github.com/ed359/mineru-for-zotero.git"
   },
   "author": "Asianfleet",
   "bugs": {
-    "url": "https://github.com/Asianfleet/mineru-for-zotero/issues"
+    "url": "https://github.com/ed359/mineru-for-zotero/issues"
   },
-  "homepage": "https://github.com/Asianfleet/mineru-for-zotero#readme",
+  "homepage": "https://github.com/ed359/mineru-for-zotero#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
