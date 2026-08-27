@@ -1002,6 +1002,103 @@ describe("parseManager", function () {
     assert.notInclude(messages, "parse-error-missing-api-key");
   });
 
+  it("pushes a lite result to Zotero sync after a successful write", async function () {
+    const messages: string[] = [];
+    const syncCalls: string[] = [];
+    const manager = createParseManager({
+      ...baseDependencies(messages),
+      getApiKey: () => "",
+      getParseSource: () => "online",
+      getParseMode: () => "lite",
+      onSyncPush: async (_source, _storage, kind) => {
+        syncCalls.push(kind);
+      },
+      storage: {
+        ...baseStorage(),
+        hasLiteResult: async () => false,
+      },
+      client: {
+        submitPdf: async () => ({ taskID: "lite-task" }),
+        pollTask: async () => ({ status: "succeeded" }),
+        downloadResult: async () => ({ kind: "lite", markdown: "# Lite" }),
+      },
+    });
+
+    await manager.parseAttachment(pdfAttachment());
+
+    assert.deepEqual(syncCalls, ["lite"]);
+  });
+
+  it("does not push to Zotero sync when the lite result is empty", async function () {
+    const messages: string[] = [];
+    let syncPushed = false;
+    const manager = createParseManager({
+      ...baseDependencies(messages),
+      getApiKey: () => "",
+      getParseSource: () => "online",
+      getParseMode: () => "lite",
+      onSyncPush: async () => {
+        syncPushed = true;
+      },
+      storage: {
+        ...baseStorage(),
+        hasLiteResult: async () => false,
+      },
+      client: {
+        submitPdf: async () => ({ taskID: "lite-task" }),
+        pollTask: async () => ({ status: "succeeded" }),
+        downloadResult: async () => ({ kind: "lite", markdown: "   " }),
+      },
+    });
+
+    await manager.parseAttachment(pdfAttachment());
+
+    assert.isFalse(syncPushed);
+  });
+
+  it("keeps parsing successful when Zotero sync push throws", async function () {
+    const messages: string[] = [];
+    const logs: unknown[][] = [];
+    const manager = createParseManager({
+      ...baseDependencies(messages),
+      getParseSource: () => "online",
+      getParseMode: () => "precise",
+      log: (...args) => logs.push(args),
+      onSyncPush: async () => {
+        throw new Error("sync failed");
+      },
+      client: {
+        submitPdf: async () => ({ taskID: "precise-task" }),
+        pollTask: async () => ({ status: "succeeded" }),
+        downloadResult: async () => ({
+          kind: "precise",
+          rawResult: {
+            pages: [
+              {
+                pageNo: 1,
+                width: 1000,
+                height: 1000,
+                blocks: [
+                  { type: "text", bbox: [0, 0, 100, 100], markdown: "A" },
+                ],
+              },
+            ],
+          },
+          markdown: "A",
+        }),
+      },
+    });
+
+    await manager.parseAttachment(pdfAttachment());
+
+    assert.include(messages, "parse-task-finished");
+    assert.isTrue(
+      logs.some((entry) =>
+        entry.includes("failed to sync MinerU parse result to Zotero"),
+      ),
+    );
+  });
+
   it("writes precise results only for precise client results", async function () {
     const messages: string[] = [];
     let wrotePrecise = false;
@@ -1040,6 +1137,69 @@ describe("parseManager", function () {
     await manager.parseAttachment(pdfAttachment());
 
     assert.isTrue(wrotePrecise);
+  });
+
+  it("pushes a precise result to Zotero sync after a successful write", async function () {
+    const messages: string[] = [];
+    const syncCalls: Array<{ kind: string; attachmentKey: string }> = [];
+    const manager = createParseManager({
+      ...baseDependencies(messages),
+      getParseSource: () => "online",
+      getParseMode: () => "precise",
+      onSyncPush: async (sourceItem, _storage, kind) => {
+        syncCalls.push({ kind, attachmentKey: sourceItem.key });
+      },
+      client: {
+        submitPdf: async () => ({ taskID: "precise-task" }),
+        pollTask: async () => ({ status: "succeeded" }),
+        downloadResult: async () => ({
+          kind: "precise",
+          rawResult: {
+            pages: [
+              {
+                pageNo: 1,
+                width: 1000,
+                height: 1000,
+                blocks: [
+                  { type: "text", bbox: [0, 0, 100, 100], markdown: "A" },
+                ],
+              },
+            ],
+          },
+          markdown: "A",
+        }),
+      },
+    });
+
+    await manager.parseAttachment(pdfAttachment());
+
+    assert.deepEqual(syncCalls, [{ kind: "precise", attachmentKey: "ABC123" }]);
+  });
+
+  it("does not push to Zotero sync when the client returns no boxes", async function () {
+    const messages: string[] = [];
+    let syncPushed = false;
+    const manager = createParseManager({
+      ...baseDependencies(messages),
+      getParseSource: () => "online",
+      getParseMode: () => "precise",
+      onSyncPush: async () => {
+        syncPushed = true;
+      },
+      client: {
+        submitPdf: async () => ({ taskID: "precise-task" }),
+        pollTask: async () => ({ status: "succeeded" }),
+        downloadResult: async () => ({
+          kind: "precise",
+          rawResult: { pages: [] },
+          markdown: "",
+        }),
+      },
+    });
+
+    await manager.parseAttachment(pdfAttachment());
+
+    assert.isFalse(syncPushed);
   });
 
   it("uses an existing lite result when the user chooses not to reparse", async function () {
@@ -1798,6 +1958,7 @@ function baseDependencies(messages: string[]): ParseManagerDependencies {
 function baseStorage(): ParseManagerDependencies["storage"] {
   return {
     getAttachmentDir: () => "TmpD/mineru-copy/attachments/12-ABC123",
+    getResolvedAttachmentDir: () => "/tmp/mineru-copy/attachments/12-ABC123",
     hasReadyResult: async () => false,
     hasLiteResult: async () => false,
     readParseStatus: async () => ({

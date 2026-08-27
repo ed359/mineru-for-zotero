@@ -22,6 +22,7 @@ import {
   markAttachmentParseRunning,
 } from "./itemTreeColumn";
 import { createStorage, type StorageAdapter } from "./storage";
+import { pushResultBestEffort, type ZoteroSyncSourceItem } from "./zoteroSync";
 import { getString } from "../utils/locale";
 import {
   getApiKey,
@@ -78,6 +79,11 @@ export interface ParseManagerDependencies {
   onParseColumnClearRunning?: (
     attachment: AttachmentRef,
     mode: ParseMode,
+  ) => Promise<void>;
+  onSyncPush?: (
+    source: ZoteroSyncSourceItem,
+    storage: StorageAdapter,
+    kind: ParseMode,
   ) => Promise<void>;
 }
 
@@ -425,6 +431,12 @@ async function parseAttachmentWithDependencies(
         source,
         markdown: result.markdown,
       });
+      await pushSyncBestEffort(
+        dependencies,
+        toSyncSourceItem(attachment, attachmentRef),
+        storage,
+        "lite",
+      );
       await updateParseColumnStatus(
         dependencies,
         "ready",
@@ -472,6 +484,12 @@ async function parseAttachmentWithDependencies(
       images:
         dependencies.getSaveImages?.() !== false ? result.images : undefined,
     });
+    await pushSyncBestEffort(
+      dependencies,
+      toSyncSourceItem(attachment, attachmentRef),
+      storage,
+      "precise",
+    );
     await updateParseColumnStatus(
       dependencies,
       "ready",
@@ -538,6 +556,41 @@ async function updateParseColumnStatus(
       error,
     });
   }
+}
+
+/**
+ * Best-effort 将解析结果推送到 Zotero（Note + 附件），避免同步失败影响核心解析流程。
+ */
+async function pushSyncBestEffort(
+  dependencies: ParseManagerDependencies,
+  source: ZoteroSyncSourceItem,
+  storage: StorageAdapter,
+  kind: ParseMode,
+): Promise<void> {
+  try {
+    await dependencies.onSyncPush?.(source, storage, kind);
+  } catch (error) {
+    dependencies.log("failed to sync MinerU parse result to Zotero", {
+      attachmentID: source.id,
+      attachmentKey: source.key,
+      libraryID: source.libraryID,
+      kind,
+      error,
+    });
+  }
+}
+
+function toSyncSourceItem(
+  attachment: Zotero.Item,
+  ref: AttachmentRef,
+): ZoteroSyncSourceItem {
+  return {
+    id: attachment.id,
+    key: attachment.key,
+    libraryID: attachment.libraryID,
+    parentItemID: attachment.parentItemID,
+    fileName: ref.fileName,
+  };
 }
 
 export async function selectedHasPDFAttachment(): Promise<boolean> {
@@ -945,6 +998,8 @@ function createDefaultDependencies(): ParseManagerDependencies {
     onParseColumnRunning: markAttachmentParseRunning,
     onParseColumnReady: markAttachmentParseReady,
     onParseColumnClearRunning: clearAttachmentParseRunning,
+    onSyncPush: (source, storage, kind) =>
+      pushResultBestEffort({ source, storage, kind }),
   };
 }
 

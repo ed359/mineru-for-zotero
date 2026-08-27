@@ -8,6 +8,8 @@ import {
   getLocalApiTimeoutMinutes,
   getParseMode,
   getParseSource,
+  getSyncIncludeImages,
+  getSyncParseResults,
   setMarkdownApiEnabled,
   setMarkdownApiRequireToken,
   setMarkdownApiToken,
@@ -17,10 +19,13 @@ import {
   setParseMode,
   setParseSource,
   setSaveImages,
+  setSyncIncludeImages,
+  setSyncParseResults,
   type ParseMode,
   type ParseSource,
 } from "../utils/prefs";
 import { createStorage } from "./storage";
+import { migrateLocalResultsToZotero } from "./zoteroSync";
 
 const STORAGE_ROOT = "ProfD/mineru-copy";
 
@@ -62,6 +67,11 @@ export async function registerPrefsScripts(_window: Window) {
     ?.addEventListener("click", () => {
       setMarkdownApiToken(generateMarkdownApiToken());
       void updateMarkdownApiTokenStatus(_window);
+    });
+  document
+    .getElementById(`${config.addonRef}-migrate-existing-results`)
+    ?.addEventListener("click", () => {
+      void runMigrateExistingResults(_window, storage);
     });
 
   registerExternalLink(
@@ -131,6 +141,18 @@ export function registerPreferenceValueSync(document: Document): void {
     `zotero-prefpane-${config.addonRef}-save-images`,
     getSaveImages,
     setSaveImages,
+  );
+  registerCheckboxPreferenceSync(
+    document,
+    `zotero-prefpane-${config.addonRef}-sync-parse-results`,
+    getSyncParseResults,
+    setSyncParseResults,
+  );
+  registerCheckboxPreferenceSync(
+    document,
+    `zotero-prefpane-${config.addonRef}-sync-include-images`,
+    getSyncIncludeImages,
+    setSyncIncludeImages,
   );
 }
 
@@ -288,6 +310,38 @@ async function updateParsedCount(
 }
 
 /**
+ * 将本地已有的解析结果补充推送到 Zotero（Note + 附件），供升级前已产生解析结果的用户使用。
+ */
+async function runMigrateExistingResults(
+  _window: Window,
+  storage: ReturnType<typeof createStorage>,
+): Promise<void> {
+  const statusID = `${config.addonRef}-migrate-existing-results-status`;
+  setText(
+    _window.document,
+    statusID,
+    await formatL10n(_window, "pref-migrate-existing-results-running"),
+  );
+
+  const summary = await migrateLocalResultsToZotero(storage);
+  const skipped =
+    summary.skippedStandalone +
+    summary.skippedNoPermission +
+    summary.skippedMissingItem;
+
+  setText(
+    _window.document,
+    statusID,
+    await formatL10n(_window, "pref-migrate-existing-results-status", {
+      migrated: summary.migrated,
+      skipped,
+      failed: summary.failed,
+    }),
+  );
+  void updateParsedCount(_window, storage);
+}
+
+/**
  * 刷新 Markdown 查询 API token 的可见值与状态文案。
  */
 async function updateMarkdownApiTokenStatus(_window: Window): Promise<void> {
@@ -327,6 +381,12 @@ async function formatL10n(
   }
   if (id === "pref-query-api-token-empty") {
     return "No token generated";
+  }
+  if (id === "pref-migrate-existing-results-running") {
+    return "Syncing existing results…";
+  }
+  if (id === "pref-migrate-existing-results-status") {
+    return `Synced ${args?.migrated ?? 0}, skipped ${args?.skipped ?? 0}, failed ${args?.failed ?? 0}.`;
   }
   return "Parsed PDFs: failed to read";
 }

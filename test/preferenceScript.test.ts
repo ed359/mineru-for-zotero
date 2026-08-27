@@ -38,6 +38,10 @@ describe("preferenceScript", function () {
       'data-l10n-id="mineruForZotero-pref-data-storage-title"',
       'id="zotero-prefpane-mineruForZotero-save-images"',
       'id="mineruForZotero-open-data-folder"',
+      'data-l10n-id="mineruForZotero-pref-sync-title"',
+      'id="zotero-prefpane-mineruForZotero-sync-parse-results"',
+      'id="zotero-prefpane-mineruForZotero-sync-include-images"',
+      'id="mineruForZotero-migrate-existing-results"',
       'data-l10n-id="mineruForZotero-pref-about-title"',
     ]);
     assertAboutSectionInsideMainGroupbox(preferences);

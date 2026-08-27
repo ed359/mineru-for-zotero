@@ -11,6 +11,12 @@ type AttachmentKeyRef = Pick<AttachmentRef, "libraryID" | "key">;
 
 export interface StorageAdapter {
   getAttachmentDir(ref: AttachmentKeyRef): string;
+  /**
+   * Same directory as `getAttachmentDir`, but resolved to a real filesystem
+   * path (e.g. with "ProfD" expanded) so callers outside this module can use
+   * it for direct file I/O.
+   */
+  getResolvedAttachmentDir(ref: AttachmentKeyRef): string;
   hasReadyResult(ref: AttachmentKeyRef): Promise<boolean>;
   hasLiteResult(ref: AttachmentKeyRef): Promise<boolean>;
   readParseStatus(ref: AttachmentKeyRef): Promise<{
@@ -69,6 +75,10 @@ export function createStorage(rootDir: string): StorageAdapter {
   return {
     getAttachmentDir(ref) {
       return getAttachmentDir(root, ref);
+    },
+
+    getResolvedAttachmentDir(ref) {
+      return getAttachmentDir(fsRoot, ref);
     },
 
     async hasReadyResult(ref) {

@@ -554,6 +554,7 @@ function fakeItemTreeManager(onRefresh: () => void = () => {}) {
 function fakeStorage(): StorageAdapter {
   return {
     getAttachmentDir: () => "",
+    getResolvedAttachmentDir: () => "",
     hasReadyResult: async () => false,
     hasLiteResult: async () => false,
     readParseStatus: async () => ({ preciseReady: false, liteReady: false }),
