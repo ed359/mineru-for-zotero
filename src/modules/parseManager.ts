@@ -22,10 +22,7 @@ import {
   markAttachmentParseRunning,
 } from "./itemTreeColumn";
 import { createStorage, type StorageAdapter } from "./storage";
-import {
-  pushResultBestEffort,
-  type ZoteroSyncSourceItem,
-} from "./zoteroSync";
+import { pushResultBestEffort, type ZoteroSyncSourceItem } from "./zoteroSync";
 import { getString } from "../utils/locale";
 import {
   getApiKey,

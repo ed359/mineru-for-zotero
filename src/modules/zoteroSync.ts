@@ -24,7 +24,10 @@ const PRECISE_RESULT_FILE_NAMES = [
   "content.md",
 ];
 const LITE_RESULT_FILE_NAMES = ["lite-manifest.json", "lite-content.md"];
-const RESULT_FILE_NAMES = [...PRECISE_RESULT_FILE_NAMES, ...LITE_RESULT_FILE_NAMES];
+const RESULT_FILE_NAMES = [
+  ...PRECISE_RESULT_FILE_NAMES,
+  ...LITE_RESULT_FILE_NAMES,
+];
 const IMAGES_DIR_NAME = "images";
 
 /**
@@ -496,7 +499,10 @@ export async function copyBundleDefault(
   await copyResultFiles(sourceDir, targetDir, preciseComplete, fileNames);
 }
 
-async function allFilesExist(dir: string, fileNames: string[]): Promise<boolean> {
+async function allFilesExist(
+  dir: string,
+  fileNames: string[],
+): Promise<boolean> {
   const results = await Promise.all(
     fileNames.map((fileName) => IOUtils.exists(PathUtils.join(dir, fileName))),
   );
@@ -525,7 +531,11 @@ async function pushResult(
   }
 
   const existing = await deps.findManagedItems(input.source);
-  await deps.saveNote({ source: input.source, existing: existing.note, markdown });
+  await deps.saveNote({
+    source: input.source,
+    existing: existing.note,
+    markdown,
+  });
 
   if (!deps.isLibraryFilesEditable(input.source.libraryID)) {
     return;
@@ -720,9 +730,13 @@ async function copyResultFiles(
   }
   const imagesSourceDir = PathUtils.join(sourceDir, IMAGES_DIR_NAME);
   if (await IOUtils.exists(imagesSourceDir)) {
-    await IOUtils.copy(imagesSourceDir, PathUtils.join(targetDir, IMAGES_DIR_NAME), {
-      recursive: true,
-    });
+    await IOUtils.copy(
+      imagesSourceDir,
+      PathUtils.join(targetDir, IMAGES_DIR_NAME),
+      {
+        recursive: true,
+      },
+    );
   }
 }
 

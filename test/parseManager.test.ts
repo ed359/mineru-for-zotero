@@ -1958,8 +1958,7 @@ function baseDependencies(messages: string[]): ParseManagerDependencies {
 function baseStorage(): ParseManagerDependencies["storage"] {
   return {
     getAttachmentDir: () => "TmpD/mineru-copy/attachments/12-ABC123",
-    getResolvedAttachmentDir: () =>
-      "/tmp/mineru-copy/attachments/12-ABC123",
+    getResolvedAttachmentDir: () => "/tmp/mineru-copy/attachments/12-ABC123",
     hasReadyResult: async () => false,
     hasLiteResult: async () => false,
     readParseStatus: async () => ({
