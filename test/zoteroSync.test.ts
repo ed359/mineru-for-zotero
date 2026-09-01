@@ -38,6 +38,42 @@ describe("zoteroSync", function () {
       assert.isAtLeast(markerIndex, 0);
       assert.isBelow(titleIndex, markerIndex);
     });
+
+    it("leaves short markdown untouched", function () {
+      const html = buildNoteHtml(
+        {
+          id: 1,
+          key: "ABC123",
+          libraryID: 12,
+          parentItemID: 99,
+          fileName: "paper.pdf",
+        },
+        "# hello\n\nsome short body text",
+      );
+
+      assert.notInclude(html, "truncated");
+      assert.include(html, "some short body text");
+    });
+
+    it("truncates markdown that would exceed Zotero's note sync limit", function () {
+      const longMarkdown = "x".repeat(300_000);
+      const html = buildNoteHtml(
+        {
+          id: 1,
+          key: "ABC123",
+          libraryID: 12,
+          parentItemID: 99,
+          fileName: "paper.pdf",
+        },
+        longMarkdown,
+      );
+
+      // Stays under Zotero's known ~250,000 char sync limit for note HTML.
+      assert.isAtMost(html.length, 200_000);
+      assert.include(html, "truncated");
+      assert.include(html, "MinerU parse data");
+      assert.notInclude(html, longMarkdown);
+    });
   });
 
   describe("pushResultBestEffort", function () {

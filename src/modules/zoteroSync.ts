@@ -740,6 +740,16 @@ async function copyResultFiles(
   }
 }
 
+// Zotero's sync backend rejects notes whose HTML content (markup included)
+// exceeds ~250,000 characters ("Note is too long to sync"). Stay well under
+// that so escaping overhead and future edits to the wrapper HTML can't tip a
+// borderline note over the real server-side limit. The data attachment (see
+// `saveDataAttachmentDefault`) always carries the untruncated markdown, so
+// truncating this preview loses nothing sync-relevant.
+const NOTE_SYNC_SAFE_LENGTH = 200_000;
+const NOTE_TRUNCATION_NOTICE =
+  '\n\n[Note truncated: this preview is capped to stay under Zotero\'s sync size limit. The full parse result is stored in the linked "MinerU parse data" attachment.]';
+
 export function buildNoteHtml(
   source: ZoteroSyncSourceItem,
   markdown: string,
@@ -753,8 +763,29 @@ export function buildNoteHtml(
     `<div data-mineru-sync-source-library-id="${source.libraryID}" ` +
     `data-mineru-sync-source-key="${escapeHtml(source.key)}" ` +
     `style="display:none"></div>`;
-  const body = `<pre>${escapeHtml(markdown)}</pre>`;
+  const wrapperLength =
+    title.length + marker.length + "<pre>".length + "</pre>".length;
+  const body = `<pre>${buildNoteBody(wrapperLength, escapeHtml(markdown))}</pre>`;
   return `${title}${marker}${body}`;
+}
+
+/**
+ * Fits the escaped markdown into whatever room is left after `wrapperLength`
+ * (title + marker + `<pre>`/`</pre>`) under `NOTE_SYNC_SAFE_LENGTH`,
+ * truncating with a pointer to the full-fidelity data attachment when it
+ * doesn't fit. Truncating the already-escaped string keeps the budget exact
+ * against Zotero's real (markup-inclusive) limit; a cut landing mid-entity is
+ * a harmless cosmetic wrinkle in a `<pre>` preview.
+ */
+function buildNoteBody(wrapperLength: number, escapedMarkdown: string): string {
+  if (wrapperLength + escapedMarkdown.length <= NOTE_SYNC_SAFE_LENGTH) {
+    return escapedMarkdown;
+  }
+  const bodyBudget =
+    NOTE_SYNC_SAFE_LENGTH - wrapperLength - NOTE_TRUNCATION_NOTICE.length;
+  return (
+    escapedMarkdown.slice(0, Math.max(bodyBudget, 0)) + NOTE_TRUNCATION_NOTICE
+  );
 }
 
 function escapeHtml(value: string): string {
