@@ -247,10 +247,10 @@ describe("itemTreeColumn", function () {
     const badge = cell.querySelector(".mineru-parse-column-badge-summary");
     assert.equal(badge?.textContent, "1/2");
     assert.equal(badge?.getAttribute("title"), "精准解析覆盖率");
-    assert.deepEqual(
-      badge && Array.from(badge.classList),
-      ["mineru-parse-column-badge", "mineru-parse-column-badge-summary"],
-    );
+    assert.deepEqual(badge && Array.from(badge.classList), [
+      "mineru-parse-column-badge",
+      "mineru-parse-column-badge-summary",
+    ]);
   });
 
   it("renders an empty cell for an empty token", function () {
