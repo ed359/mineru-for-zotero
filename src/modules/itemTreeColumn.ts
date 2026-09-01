@@ -47,23 +47,51 @@ export function getAttachmentStatusKey(ref: AttachmentStatusKeyRef): string {
   return `${ref.libraryID}-${ref.key}`;
 }
 
+const PARENT_SUMMARY_TOKEN_PREFIX = "parent:";
+
 export function getMinerUParseColumnToken(
   item: Zotero.Item,
   statuses: Map<string, ParseColumnStatus>,
+  resolvePdfChildAttachments: (
+    item: Zotero.Item,
+  ) => Zotero.Item[] = getPdfChildAttachments,
 ): string {
-  if (!isPdfAttachment(item)) {
+  if (isPdfAttachment(item)) {
+    const status = statuses.get(
+      getAttachmentStatusKey({
+        libraryID: item.libraryID,
+        key: item.key,
+      }),
+    );
+    if (!status) {
+      return "";
+    }
+    return createTokenParts(status).join("|");
+  }
+  if (isRegularItem(item)) {
+    return createParentSummaryToken(resolvePdfChildAttachments(item), statuses);
+  }
+  return "";
+}
+
+function createParentSummaryToken(
+  pdfChildren: Zotero.Item[],
+  statuses: Map<string, ParseColumnStatus>,
+): string {
+  const total = pdfChildren.length;
+  if (total === 0) {
     return "";
   }
-  const status = statuses.get(
-    getAttachmentStatusKey({
-      libraryID: item.libraryID,
-      key: item.key,
-    }),
-  );
-  if (!status) {
+  const ready = pdfChildren.reduce((count, child) => {
+    const status = statuses.get(
+      getAttachmentStatusKey({ libraryID: child.libraryID, key: child.key }),
+    );
+    return status?.precise === "ready" ? count + 1 : count;
+  }, 0);
+  if (ready === 0) {
     return "";
   }
-  return createTokenParts(status).join("|");
+  return `${PARENT_SUMMARY_TOKEN_PREFIX}${ready}/${total}`;
 }
 
 export function createMinerUParseColumnRegistration(input: {
@@ -105,7 +133,23 @@ export function renderMinerUParseCell(
   const cellDoc = doc ?? Zotero.getMainWindow().document;
   const cell = cellDoc.createElement("span");
   cell.className = `${column.className} mineru-parse-column-cell`.trim();
-  const tokens = (data ?? "").split("|").filter(Boolean);
+  const raw = data ?? "";
+
+  if (raw.startsWith(PARENT_SUMMARY_TOKEN_PREFIX)) {
+    const badges = cellDoc.createElement("span");
+    badges.className = "mineru-parse-column-badges";
+    badges.append(
+      createSummaryBadge(
+        cellDoc,
+        raw.slice(PARENT_SUMMARY_TOKEN_PREFIX.length),
+        resolveString,
+      ),
+    );
+    cell.append(badges);
+    return cell;
+  }
+
+  const tokens = raw.split("|").filter(Boolean);
   if (tokens.length === 0) {
     return cell;
   }
@@ -308,12 +352,42 @@ function resolveModeLabel(
     : resolveString("item-tree-column-mineru-parse-precise");
 }
 
+function createSummaryBadge(
+  doc: Document,
+  summary: string,
+  resolveString: (id: FluentMessageId) => string,
+): HTMLElement {
+  const badge = doc.createElement("span");
+  badge.className =
+    "mineru-parse-column-badge mineru-parse-column-badge-summary";
+  badge.textContent = summary;
+  badge.title = resolveString("item-tree-column-mineru-parse-summary");
+  return badge;
+}
+
 function isPdfAttachment(item: Zotero.Item): boolean {
   return (
     typeof item.isAttachment === "function" &&
     typeof item.isPDFAttachment === "function" &&
     item.isAttachment() &&
     item.isPDFAttachment()
+  );
+}
+
+function isRegularItem(item: Zotero.Item): boolean {
+  return typeof item.isRegularItem === "function" && item.isRegularItem();
+}
+
+function getPdfChildAttachments(item: Zotero.Item): Zotero.Item[] {
+  if (typeof item.getAttachments !== "function") {
+    return [];
+  }
+  const childIDs = item.getAttachments(false);
+  if (!childIDs || childIDs.length === 0) {
+    return [];
+  }
+  return Zotero.Items.get(childIDs).filter((candidate) =>
+    isPdfAttachment(candidate),
   );
 }
 

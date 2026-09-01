@@ -2,6 +2,7 @@ item-tree-column-mineru-parse = MinerU 解析
 item-tree-column-mineru-parse-precise = 精准
 item-tree-column-mineru-parse-lite = 轻量
 item-tree-column-mineru-parse-running = 解析中
+item-tree-column-mineru-parse-summary = 精准解析覆盖率
 parse-menuitem-label = 使用 MinerU 解析 PDF
 parse-pdf-menuitem =
     .label = 使用 MinerU 解析 PDF

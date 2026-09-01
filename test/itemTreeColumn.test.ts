@@ -32,11 +32,66 @@ describe("itemTreeColumn", function () {
     );
   });
 
-  it("returns an empty token for regular items and non-PDF attachments", function () {
+  it("returns an empty token for regular items with no PDF children and non-PDF attachments", function () {
     const statuses = new Map<string, ParseColumnStatus>();
 
     assert.equal(getMinerUParseColumnToken(regularItem(), statuses), "");
     assert.equal(getMinerUParseColumnToken(nonPdfAttachment(), statuses), "");
+  });
+
+  it("returns an empty token for non-regular, non-PDF rows such as notes", function () {
+    const statuses = new Map<string, ParseColumnStatus>();
+
+    assert.equal(getMinerUParseColumnToken(noteItem(), statuses), "");
+  });
+
+  it("returns an empty token for a parent item whose PDF children are not precise-ready", function () {
+    const statuses = new Map<string, ParseColumnStatus>([
+      ["12-CHILD1", { precise: "none", lite: "ready" }],
+    ]);
+
+    assert.equal(
+      getMinerUParseColumnToken(parentItem(), statuses, () => [
+        pdfChildAttachment("CHILD1"),
+      ]),
+      "",
+    );
+  });
+
+  it("summarizes a parent item's precise-ready PDF children as k/n", function () {
+    const statuses = new Map<string, ParseColumnStatus>([
+      ["12-CHILD1", { precise: "ready", lite: "none" }],
+      ["12-CHILD2", { precise: "none", lite: "ready" }],
+    ]);
+
+    assert.equal(
+      getMinerUParseColumnToken(parentItem(), statuses, () => [
+        pdfChildAttachment("CHILD1"),
+        pdfChildAttachment("CHILD2"),
+      ]),
+      "parent:1/2",
+    );
+  });
+
+  it("summarizes a parent item where every PDF child is precise-ready", function () {
+    const statuses = new Map<string, ParseColumnStatus>([
+      ["12-CHILD1", { precise: "ready", lite: "none" }],
+      ["12-CHILD2", { precise: "ready", lite: "none" }],
+    ]);
+
+    assert.equal(
+      getMinerUParseColumnToken(parentItem(), statuses, () => [
+        pdfChildAttachment("CHILD1"),
+        pdfChildAttachment("CHILD2"),
+      ]),
+      "parent:2/2",
+    );
+  });
+
+  it("does not use the default child resolver when a mock lacks getAttachments", function () {
+    const statuses = new Map<string, ParseColumnStatus>();
+
+    assert.equal(getMinerUParseColumnToken(regularItem(), statuses), "");
   });
 
   it("returns precise and lite tokens in a stable order", function () {
@@ -164,6 +219,37 @@ describe("itemTreeColumn", function () {
     assert.equal(
       cell.querySelector(".mineru-parse-column-badge-precise")?.textContent,
       "精准",
+    );
+  });
+
+  it("renders a summary badge for a parent item's k/n token", function () {
+    const cell = renderMinerUParseCell(
+      0,
+      "parent:1/2",
+      {
+        className: "custom-column",
+      } as Parameters<typeof renderMinerUParseCell>[2],
+      false,
+      document,
+      (id) => {
+        const values: Record<string, string> = {
+          "item-tree-column-mineru-parse-summary": "精准解析覆盖率",
+        };
+        return values[id] ?? id;
+      },
+    );
+
+    assert.equal(cell.className, "custom-column mineru-parse-column-cell");
+    assert.equal(
+      cell.firstElementChild?.className,
+      "mineru-parse-column-badges",
+    );
+    const badge = cell.querySelector(".mineru-parse-column-badge-summary");
+    assert.equal(badge?.textContent, "1/2");
+    assert.equal(badge?.getAttribute("title"), "精准解析覆盖率");
+    assert.deepEqual(
+      badge && Array.from(badge.classList),
+      ["mineru-parse-column-badge", "mineru-parse-column-badge-summary"],
     );
   });
 
@@ -540,6 +626,37 @@ function regularItem(): Zotero.Item {
     libraryID: 12,
     isAttachment: () => false,
     isPDFAttachment: () => false,
+    isRegularItem: () => true,
+  } as unknown as Zotero.Item;
+}
+
+function noteItem(): Zotero.Item {
+  return {
+    key: "NOTE123",
+    libraryID: 12,
+    isAttachment: () => false,
+    isPDFAttachment: () => false,
+    isRegularItem: () => false,
+  } as unknown as Zotero.Item;
+}
+
+function parentItem(): Zotero.Item {
+  return {
+    key: "PARENT1",
+    libraryID: 12,
+    isAttachment: () => false,
+    isPDFAttachment: () => false,
+    isRegularItem: () => true,
+    getAttachments: () => [101, 102],
+  } as unknown as Zotero.Item;
+}
+
+function pdfChildAttachment(key: string): Zotero.Item {
+  return {
+    key,
+    libraryID: 12,
+    isAttachment: () => true,
+    isPDFAttachment: () => true,
   } as unknown as Zotero.Item;
 }
 

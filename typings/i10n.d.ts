@@ -7,6 +7,7 @@ export type FluentMessageId =
   | 'item-tree-column-mineru-parse-lite'
   | 'item-tree-column-mineru-parse-precise'
   | 'item-tree-column-mineru-parse-running'
+  | 'item-tree-column-mineru-parse-summary'
   | 'menuitem-filemenulabel'
   | 'menuitem-label'
   | 'menuitem-submenulabel'
