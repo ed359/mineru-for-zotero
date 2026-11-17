@@ -5,6 +5,14 @@ import {
   unregisterMarkdownQueryApiEndpoint,
 } from "./modules/markdownQuery/apiEndpoint";
 import {
+  registerSourceQueryApiEndpoint,
+  unregisterSourceQueryApiEndpoint,
+} from "./modules/sourceQuery/apiEndpoint";
+import {
+  registerMcpApiEndpoint,
+  unregisterMcpApiEndpoint,
+} from "./modules/mcp/apiEndpoint";
+import {
   registerItemTreeColumn,
   unregisterItemTreeColumn,
 } from "./modules/itemTreeColumn";
@@ -24,6 +32,10 @@ import {
   unregisterZoteroSyncObserver,
 } from "./modules/zoteroSync";
 import { createZToolkit } from "./utils/ztoolkit";
+import {
+  registerReaderQueryApiEndpoint,
+  unregisterReaderQueryApiEndpoint,
+} from "./modules/readerQuery/apiEndpoint";
 
 async function onStartup() {
   await Promise.all([
@@ -36,6 +48,9 @@ async function onStartup() {
 
   registerPreferencePane();
   registerMarkdownQueryApiEndpoint();
+  registerSourceQueryApiEndpoint();
+  registerReaderQueryApiEndpoint();
+  registerMcpApiEndpoint();
   const zoteroSyncStorage = createStorage(getMinerUStorageRoot());
   addon.data.zoteroSyncObserverID =
     registerZoteroSyncObserver(zoteroSyncStorage);
@@ -104,7 +119,10 @@ function onShutdown(): void {
     removeMainWindowStylesheet(win);
   });
   unregisterReaderToolbar();
+  unregisterMcpApiEndpoint();
+  unregisterReaderQueryApiEndpoint();
   unregisterMarkdownQueryApiEndpoint();
+  unregisterSourceQueryApiEndpoint();
   destroyAllReaderOverlays();
   unregisterItemTreeColumn();
   if (addon.data.zoteroSyncObserverID) {

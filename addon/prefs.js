@@ -7,5 +7,6 @@ pref("apiEnabled", false);
 pref("apiRequireToken", true);
 pref("apiToken", "");
 pref("saveImages", true);
+pref("overlayCycleShortcut", "Alt+Shift+KeyB");
 pref("syncParseResults", true);
 pref("syncIncludeImages", false);

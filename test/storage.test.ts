@@ -5,6 +5,35 @@ import { normalizedBoxes } from "./domainFixtures";
 const rootDir = "TmpD/mineru-copy";
 
 describe("storage", function () {
+  it("strict parse status distinguishes missing cache from corrupted manifests", async function () {
+    const storage = createStorage("TmpD/mineru-strict-status-test");
+    const ref = { libraryID: 12, key: "STRICT" };
+    const dir = resolveTmpPath(storage.getAttachmentDir(ref));
+    await IOUtils.makeDirectory(dir, { ignoreExisting: true });
+    const manifestPath = PathUtils.join(dir, "manifest.json");
+    await IOUtils.remove(manifestPath, { ignoreAbsent: true });
+    assert.deepEqual(await storage.readParseStatus(ref, { strict: true }), {
+      preciseReady: false,
+      liteReady: false,
+    });
+    await IOUtils.writeUTF8(manifestPath, "broken json");
+    try {
+      let rejected = false;
+      try {
+        await storage.readParseStatus(ref, { strict: true });
+      } catch {
+        rejected = true;
+      }
+      assert.isTrue(rejected, "corrupted manifest must not look unparsed");
+      assert.deepEqual(await storage.readParseStatus(ref), {
+        preciseReady: false,
+        liteReady: false,
+      });
+    } finally {
+      await IOUtils.remove(manifestPath, { ignoreAbsent: true });
+    }
+  });
+
   it("uses libraryID and attachmentKey as stable directory name", function () {
     const storage = createStorage(rootDir);
 
@@ -507,6 +536,34 @@ describe("storage", function () {
       "data:image/png;base64,iVBORw==",
     );
     assert.isNull(await storage.readImageDataURL(attachment, "../a.png"));
+  });
+
+  it("reads MinerU image bytes with mime type", async function () {
+    const storage = createStorage(rootDir);
+    const attachment = {
+      id: 1,
+      key: "IMGBYTES",
+      libraryID: 12,
+      fileName: "a.pdf",
+      filePath: "a.pdf",
+      mtime: 1,
+    };
+
+    await storage.writeResult({
+      attachment,
+      mineruTaskID: "task-image-bytes",
+      rawResult: {},
+      markdown: "![A](images/a.jpg)",
+      boxes: [],
+      images: [{ path: "a.jpg", bytes: new Uint8Array([1, 2, 3]) }],
+    });
+
+    const image = await storage.readImage(attachment, "images/a.jpg");
+
+    assert.deepEqual(Array.from(image?.bytes ?? []), [1, 2, 3]);
+    assert.equal(image?.mime, "image/jpeg");
+    assert.equal(image?.dataURL, "data:image/jpeg;base64,AQID");
+    assert.isNull(await storage.readImage(attachment, "../a.jpg"));
   });
 
   it("reports missing or non-ready results as not ready", async function () {

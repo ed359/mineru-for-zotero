@@ -66,6 +66,8 @@ API Key 只保存在本机 Zotero 首选项中。
 
 需要复制多个区域时，按住 `Shift` 或 `Ctrl` 点击多个 box。随后可在工具栏菜单中复制已选内容或清空选择。没有选中任何 box 时，同一个复制按钮会复制全文 Markdown。
 
+默认快捷键 `Alt+Shift+B` 按“显示全部 box → 仅显示鼠标所在 box → 关闭”循环切换，每次触发都会打开工具栏菜单并显示当前模式。按键未全部松开时菜单保持显示，全部松开后自动关闭；阅读器失焦时也会关闭。在插件设置的“阅读器快捷键”中点击输入框并按下新的组合键即可改绑，点击“清除”可禁用快捷键。
+
 ## 本地结果
 
 打开 `编辑` -> `设置` -> `MinerU for Zotero`，点击 `打开数据文件夹` 可以查看本地解析结果。设置页也会显示当前已有可用结果的 PDF 数量。
@@ -74,15 +76,18 @@ API Key 只保存在本机 Zotero 首选项中。
 
 ## 本地 Markdown 查询 API
 
-本地 Markdown 查询 API 让外部本地工具通过 Zotero 自带的本地 HTTP server 读取 MinerU for Zotero 已经保存的 Markdown 解析结果。它只查询本机已有结果，不会提交新的 MinerU 解析任务，也不会直接暴露插件数据目录。
+本地来源查询 API 让外部本地工具通过 Zotero 自带的本地 HTTP server 读取已保存的 MinerU Markdown，或按需获取 arXiv LaTeX 源码。它不会提交新的 MinerU 解析任务，也不会直接暴露插件数据目录。
 
 主要能力：
 
 - 按 Zotero 标题关键词检索候选条目和 PDF attachment。
 - 通过 `libraryID + key` 读取普通条目或 PDF attachment 的 Markdown。
 - 支持 `full`、`headings`、`section`、`search` 四种查询粒度，便于外部 agent 先看目录、再读取章节或关键词上下文。
+- 支持按章节号或模糊路径读取章节、按标题或内容查询表格，并读取 Markdown 中引用的 `images/...` 图片。
 - 普通条目下有多个 PDF attachment 时，可用 `attachmentKey` 精确选择目标附件。
 - 优先返回精准解析 Markdown；没有精准结果但有轻量解析结果时，返回轻量 Markdown，并在响应里标记 `result.mode`。
+
+兼容性提示：`granularity=section` 现在会在 `groups` 下返回分组结果。使用 `sectionNumber` 查询带编号的标题，使用模糊 `sectionPath` 做部分标题或路径匹配。表格可通过 `/mineru-for-zotero/markdown/table` 读取；Markdown 中引用的 `images/...` 图片可通过 `/mineru-for-zotero/markdown/image` 读取。`/image` 对单图和逗号分隔的多图路径统一返回 JSON，其中成功的图片包含 base64 `dataURL`。
 
 ### 配置
 
@@ -108,32 +113,32 @@ curl --get "http://127.0.0.1:23119/mineru-for-zotero/search" \
 读取全文 Markdown：
 
 ```shell
-curl "http://127.0.0.1:23119/mineru-for-zotero/markdown?libraryID=1&key=ABCD1234" \
+curl "http://127.0.0.1:23119/mineru-for-zotero/markdown/read?libraryID=1&key=ABCD1234" \
   -H "Authorization: Bearer <token>"
 ```
 
 只读取标题层级，适合先了解文档结构：
 
 ```shell
-curl "http://127.0.0.1:23119/mineru-for-zotero/markdown?libraryID=1&key=ABCD1234&granularity=headings" \
+curl "http://127.0.0.1:23119/mineru-for-zotero/markdown/read?libraryID=1&key=ABCD1234&granularity=headings" \
   -H "Authorization: Bearer <token>"
 ```
 
 读取指定章节：
 
 ```shell
-curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/read" \
   --data-urlencode "libraryID=1" \
   --data-urlencode "key=ABCD1234" \
   --data-urlencode "granularity=section" \
-  --data-urlencode "sectionPath=Introduction/Background" \
+  --data-urlencode "sectionNumber=5.1,5.3-5.5" \
   -H "Authorization: Bearer <token>"
 ```
 
 在 Markdown 中搜索关键词并返回前后文段落：
 
 ```shell
-curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/read" \
   --data-urlencode "libraryID=1" \
   --data-urlencode "key=ABCD1234" \
   --data-urlencode "granularity=search" \
@@ -142,18 +147,44 @@ curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
   -H "Authorization: Bearer <token>"
 ```
 
+按标题或单元格内容查询表格：
+
+```shell
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/table" \
+  --data-urlencode "libraryID=1" \
+  --data-urlencode "key=ABCD1234" \
+  --data-urlencode "q=Table 2" \
+  --data-urlencode "match=both" \
+  --data-urlencode "tableFormat=markdown" \
+  -H "Authorization: Bearer <token>"
+```
+
+用 CLI 保存 Markdown 中引用的图片：
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown image \
+  --library-id 1 --key ABCD1234 --path images/a.jpg \
+  --token "<token>" --output a.jpg
+```
+
+`/image` 对单图和多图路径都返回 JSON。成功的图片包含 base64 `dataURL`；CLI 保存文件时会将其解码为原始图片字节。
+
 常用参数：
 
-| 参数                | 端点                 | 说明                                                           |
-| ------------------- | -------------------- | -------------------------------------------------------------- |
-| `libraryID`         | `search`、`markdown` | Zotero library ID，个人库通常是 `1`。                          |
-| `title`             | `search`             | 标题关键词，用于查找候选 Zotero 条目。                         |
-| `key`               | `markdown`           | Zotero 普通条目 key 或 PDF attachment key。                    |
-| `attachmentKey`     | `markdown`           | 普通条目包含多个 PDF 时指定目标 PDF attachment。               |
-| `granularity`       | `markdown`           | `full`、`headings`、`section` 或 `search`，默认 `full`。       |
-| `sectionPath`       | `markdown`           | `section` 查询使用的标题路径，例如 `Introduction/Background`。 |
-| `q`                 | `markdown`           | `search` 查询使用的关键词。                                    |
-| `contextParagraphs` | `markdown`           | `search` 命中前后的上下文段落数。                              |
+| 参数                | 端点                                    | 说明                                                         |
+| ------------------- | --------------------------------------- | ------------------------------------------------------------ |
+| `libraryID`         | `search`、`markdown`、`tables`、`image` | Zotero library ID，个人库通常是 `1`。                        |
+| `title`             | `search`                                | 标题关键词，用于查找候选 Zotero 条目。                       |
+| `key`               | `markdown`、`tables`、`image`           | Zotero 普通条目 key 或 PDF attachment key。                  |
+| `attachmentKey`     | `markdown`、`tables`、`image`           | 普通条目包含多个 PDF 时指定目标 PDF attachment。             |
+| `granularity`       | `markdown`                              | `full`、`headings`、`section` 或 `search`，默认 `full`。     |
+| `sectionNumber`     | `markdown`                              | `section` 查询使用的章节号，例如 `5.1,5.3-5.5`。             |
+| `sectionPath`       | `markdown`                              | `section` 查询使用的模糊标题或路径片段。                     |
+| `q`                 | `markdown`、`tables`                    | Markdown 搜索或表格查询使用的关键词。                        |
+| `contextParagraphs` | `markdown`                              | `search` 命中前后的上下文段落数。                            |
+| `match`             | `tables`                                | 表格匹配范围：`caption`、`content` 或 `both`。               |
+| `tableFormat`       | `tables`                                | 表格输出格式：`html`、`markdown`、`tsv`、`latex` 或 `json`。 |
+| `path`              | `image`                                 | 图片路径，例如 `images/a.jpg`，也可传入逗号分隔的多个路径。  |
 
 常见错误码：
 
@@ -166,19 +197,85 @@ curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
 
 ### 配套 Skill 与 CLI
 
-仓库内提供了配套 Skill：`mineru-for-zotero-cli/`。它面向 Codex 或其他本地 agent，封装了 HTTP 参数、token header、端口读取、错误提示和文本排版。前置条件与 HTTP API 相同：Zotero 正在运行，插件已启用本地 Markdown 查询 API；如果设置页要求 token，调用时传入 `--token <token>`。
+仓库内提供了两个配套 Skill：`mineru-for-zotero-cli/` 适用于可以执行 Node CLI 的 agent，`mineru-for-zotero-mcp/` 适用于只能连接 MCP server 的 agent。两者的前置条件与 HTTP API 相同：Zotero 正在运行，插件已启用本地 Markdown 查询 API；如果设置页要求 token，CLI 传入 `--token <token>`，MCP 客户端配置 `Authorization: Bearer <token>`。
 
 在仓库根目录可以直接运行 CLI：
 
 ```shell
-node mineru-for-zotero-cli/scripts/query-markdown.mjs search --library-id 1 --title "paper title" --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity section --section-path "Introduction/Background" --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity search --query "retrieval" --context-paragraphs 2 --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity full --format json --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs search --library-id 1 --title "paper title" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity section --section-number "5.1,5.3-5.5" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity search --query "retrieval" --context-paragraphs 2 --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown table --library-id 1 --key ABCD1234 --query "Table 2" --match both --table-format markdown --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown image --library-id 1 --key ABCD1234 --path "images/a.jpg" --output a.jpg --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity full --format json --token "<token>"
 ```
 
+LaTeX 命令使用 Zotero 条目 `extra` 或 `url` 中的 arXiv ID。先下载并解压源码；不带版本号时下载最新版，像 `arXiv:2401.12345v2` 这样的 ID 下载指定版本：
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs latex fetch --library-id 1 --key ABCD1234 --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity section --section-path "Main Results" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity search --query "attention" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex table --library-id 1 --key ABCD1234 --query "Table 2" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex image --library-id 1 --key ABCD1234 --path figures/model.pdf --output model.pdf --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex image --library-id 1 --key ABCD1234 --path imgs/one.pdf,imgs/two.pdf --output-dir extracted --token "<token>"
+```
+
+CLI 命令中，`search`、`markdown` 和 `latex` 需要 `--library-id`；所有 `markdown` 和 `latex` 命令都需要 `--key`。LaTeX 章节只接受 `--section-path`：用 `/` 分隔、大小写不敏感的完整精确标题路径，或唯一的末级标题；不支持 `--section-number`、编号范围和模糊片段。LaTeX 搜索需要非空 `--query`，可用 `--context-paragraphs` 设置前后源码段落数（默认 `1`），结果显示原文件和行号。`--table-format` 只适用于 `markdown table`；`latex table` 始终返回原始 LaTeX 代码，不接受该参数。
+
+`latex table` 始终返回原始 LaTeX 表格代码。需要重新下载源码时，使用 `latex fetch --refresh`。
+
 CLI 默认会尝试从 Zotero 默认 profile 读取本地 HTTP server 端口，读不到时使用 `23119`。如果需要手动指定端口，添加 `--port <number>`。默认输出 `--format text`，适合 agent 直接阅读；需要脚本处理时使用 `--format json`。
+
+使用 `image` 时，单图路径用 `--output <file>`；多图逗号分隔路径必须用 `--output-dir <dir>`。LaTeX 图片在输出目录中保留 `imgs/`、`logo/` 等源码子目录；每个请求路径返回独立状态，重复路径只写一次，部分失败仍保留成功文件并返回非零退出码。text 和 JSON 输出均不含图片 base64。LaTeX 末级标题有歧义时返回候选完整路径，未找到章节时返回 `section-not-found`。
+
+### 打开的 tab 与已选 box
+
+无需传入条目标识即可查询当前阅读上下文：
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs tabs list --scope all --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs tabs list --scope active --format json --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs boxes selected --scope all --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs boxes selected --scope active --format json --token "<token>"
+```
+
+两个命令默认 `--scope active`，指最近活动的 Zotero 主窗口中选中的 tab，切换到终端后仍使用该主窗口。当前为图书馆 tab 时返回空结果。`tabs all` 包含所有主窗口中的条目 tab，包括未加载 tab，排除图书馆 tab。`boxes all` 包含后台 tab 的 Reader 和独立 PDF 阅读窗口；active 返回当前 tab 内全部已选 box，不限制屏幕可视区域。
+
+tab 返回 `tabId`、`active`、`libraryId`、`itemId`、`itemKey`、`title`、`attachmentId`、`attachmentKey`、`tabTitle`、`status` 和 `parseStatus`。条目字段对应父文献或独立附件，附件字段始终对应实际打开的附件。PDF 的解析情况包括 `preciseReady`、`liteReady`、`preciseRunning`、`liteRunning` 和 `preferredMode`（`precise`、`lite` 或 null）。重新解析期间旧结果仍可用，因此就绪和解析中可同时为 true。非 PDF 的 parseStatus 为 null；条目或解析状态不可读时，逐项返回 `item-unavailable` 或 `parse-status-unavailable`。
+
+已选 box 按 Reader 分组返回 `readers`，包含来源标识、`readerInstanceId`、`selectedCount`、`boxes`、合并的 `markdown`、`missingRawIndexes` 和逐组 `status`。box 按 rawIndex 排序，页码沿用既有 box 约定；公式保留美元定界符，图片保留 Markdown 引用。没有选中 box 的 Reader 不返回；全部没有选择时，`readers` 为空，文本只显示“No selected boxes.”，不附带 tab 信息，也不回退全文。`stale-selection`、`parse-result-unavailable` 或 `item-unavailable` 保留其他成功组，CLI 退出码为 1；正常空结果退出码为 0。查询不改变选择或剪贴板，也不启动解析或下载。
+
+对应 HTTP 路径为 `GET /mineru-for-zotero/tabs?scope=all|active` 和 `GET /mineru-for-zotero/boxes/selected?scope=all|active`，复用既有 API 开关和鉴权。非法 scope 返回 400，逐项状态返回 200。CLI JSON 沿用既有 envelope，box 部分失败时 `ok: false`。
+
+## MCP 查询服务
+
+如果 MCP 客户端不能执行 Node CLI，可以直接连接插件提供的无状态 Streamable HTTP MCP endpoint。它使用 Zotero 已有的本地 HTTP server，不会启动额外进程或端口：
+
+```text
+http://127.0.0.1:23119/mineru-for-zotero/mcp
+```
+
+请先在设置页启用 `本地 Markdown 查询 API`。如果开启了 token 校验，在 MCP 客户端配置中加入 `Authorization: Bearer <token>` header。Zotero 端口不是默认值 `23119` 时，请替换 URL 中的端口。
+
+支持 URL MCP server 配置的客户端可以使用类似下面的配置：
+
+```json
+{
+  "mcpServers": {
+    "mineru-for-zotero": {
+      "url": "http://127.0.0.1:23119/mineru-for-zotero/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+工具包括 `zotero_search_items`、`mineru_read_markdown`、`mineru_query_markdown_table`、`mineru_get_markdown_image`、`mineru_fetch_latex`、`mineru_read_latex`、`mineru_query_latex_table`、`mineru_get_latex_image`、`zotero_list_tabs` 和 `mineru_get_selected_boxes`。两个运行时工具只接受 `{ "scope": "all" }` 或 `{ "scope": "active" }`，传入 `{}` 时默认 active；范围与返回字段同上面的 CLI。box 部分失败时 `isError: true`，同时保留成功内容。普通查询返回结构化结果和可读文本，图片工具会返回 MCP image content block。服务是无状态的，每个 JSON-RPC 请求独立处理；插件关闭后 endpoint 会注销。
 
 ## 常见问题
 

@@ -2,6 +2,7 @@ import type {
   AttachmentRef,
   LiteParseManifest,
   MinerUImageFile,
+  MinerUImageReadResult,
   NormalizedBox,
   ParseManifest,
 } from "./domain";
@@ -19,7 +20,10 @@ export interface StorageAdapter {
   getResolvedAttachmentDir(ref: AttachmentKeyRef): string;
   hasReadyResult(ref: AttachmentKeyRef): Promise<boolean>;
   hasLiteResult(ref: AttachmentKeyRef): Promise<boolean>;
-  readParseStatus(ref: AttachmentKeyRef): Promise<{
+  readParseStatus(
+    ref: AttachmentKeyRef,
+    options?: { strict?: boolean },
+  ): Promise<{
     preciseReady: boolean;
     liteReady: boolean;
   }>;
@@ -34,6 +38,10 @@ export interface StorageAdapter {
     ref: AttachmentKeyRef,
     imageMarkdownPath: string,
   ): Promise<string | null>;
+  readImage(
+    ref: AttachmentKeyRef,
+    imageMarkdownPath: string,
+  ): Promise<MinerUImageReadResult | null>;
   writeResult(input: {
     attachment: AttachmentRef;
     mineruTaskID: string;
@@ -89,8 +97,8 @@ export function createStorage(rootDir: string): StorageAdapter {
       return hasReadyLiteResult(fsRoot, ref);
     },
 
-    async readParseStatus(ref) {
-      return readParseStatusFromDir(fsRoot, ref);
+    async readParseStatus(ref, options) {
+      return readParseStatusFromDir(fsRoot, ref, options?.strict);
     },
 
     async listParseStatuses() {
@@ -154,6 +162,10 @@ export function createStorage(rootDir: string): StorageAdapter {
         getAttachmentDir(fsRoot, ref),
         imageMarkdownPath,
       );
+    },
+
+    async readImage(ref, imageMarkdownPath) {
+      return readImageFromDir(getAttachmentDir(fsRoot, ref), imageMarkdownPath);
     },
 
     async writeResult(input) {
@@ -345,29 +357,42 @@ async function hasReadyLiteResult(
 async function readParseStatusFromDir(
   root: string,
   ref: AttachmentKeyRef,
+  strict = false,
 ): Promise<{ preciseReady: boolean; liteReady: boolean }> {
-  return readParseStatusFromAttachmentDir(getAttachmentDir(root, ref));
+  return readParseStatusFromAttachmentDir(getAttachmentDir(root, ref), strict);
 }
 
 async function readParseStatusFromAttachmentDir(
   dir: string,
+  strict = false,
 ): Promise<{ preciseReady: boolean; liteReady: boolean }> {
   return {
-    preciseReady: await hasReadyPreciseResultInDir(dir),
-    liteReady: await hasReadyLiteResultInDir(dir),
+    preciseReady: await hasReadyPreciseResultInDir(dir, strict),
+    liteReady: await hasReadyLiteResultInDir(dir, strict),
   };
 }
 
-async function hasReadyPreciseResultInDir(dir: string): Promise<boolean> {
+async function hasReadyPreciseResultInDir(
+  dir: string,
+  strict = false,
+): Promise<boolean> {
+  // 严格查询只将不存在的 manifest 视为未解析，其他读取错误交给调用方。
+  if (strict && !(await exists(joinPath(dir, MANIFEST_FILE)))) return false;
   try {
     const manifest = await readManifestFile(dir);
     return manifest.status === "ready";
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return false;
   }
 }
 
-async function hasReadyLiteResultInDir(dir: string): Promise<boolean> {
+async function hasReadyLiteResultInDir(
+  dir: string,
+  strict = false,
+): Promise<boolean> {
+  if (strict && !(await exists(joinPath(dir, LITE_MANIFEST_FILE))))
+    return false;
   try {
     const manifest = (await readJson(
       joinPath(dir, LITE_MANIFEST_FILE),
@@ -377,7 +402,8 @@ async function hasReadyLiteResultInDir(dir: string): Promise<boolean> {
     }
     const markdown = await readText(joinPath(dir, LITE_CONTENT_FILE));
     return Boolean(markdown.trim());
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return false;
   }
 }
@@ -397,6 +423,17 @@ async function readImageDataURLFromDir(
   dir: string,
   imageMarkdownPath: string,
 ): Promise<string | null> {
+  const image = await readImageFromDir(dir, imageMarkdownPath);
+  return image?.dataURL ?? null;
+}
+
+/**
+ * 从附件结果目录读取 MinerU 图片字节，并复用 Markdown 图片路径安全校验。
+ */
+async function readImageFromDir(
+  dir: string,
+  imageMarkdownPath: string,
+): Promise<MinerUImageReadResult | null> {
   const relativePath = normalizeMinerUImageMarkdownPath(imageMarkdownPath);
   if (!relativePath) {
     return null;
@@ -406,7 +443,13 @@ async function readImageDataURLFromDir(
     return null;
   }
   const bytes = await readBytes(imagePath);
-  return `data:${getImageMimeType(relativePath)};base64,${bytesToBase64(bytes)}`;
+  const mime = getImageMimeType(relativePath);
+  return {
+    path: `${IMAGES_DIR}/${relativePath}`,
+    mime,
+    bytes,
+    dataURL: `data:${mime};base64,${bytesToBase64(bytes)}`,
+  };
 }
 
 function getAttachmentDir(root: string, ref: AttachmentKeyRef): string {

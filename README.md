@@ -66,6 +66,8 @@ If parsing fails during replacement, the existing usable result is kept.
 
 For multi-box copying, hold `Shift` or `Ctrl` while clicking boxes. Then use the toolbar menu to copy the selected content or clear the selection. If no boxes are selected, the same copy button copies the full parsed Markdown.
 
+Press `Alt+Shift+B` to cycle through all boxes, hovered boxes, and off. Each press opens the toolbar menu and highlights the current mode. The menu stays open while any keys remain held and closes when all keys are released or the reader loses focus. To change the binding, click the input under Reader Shortcuts in the plugin settings and press a new key combination. Click Clear to disable the shortcut.
+
 ## Local Results
 
 Open `Edit` -> `Settings` -> `MinerU for Zotero` and click `Open Data Folder` to view local parse results. The settings page also shows how many PDFs currently have usable results.
@@ -74,15 +76,18 @@ The result folder contains the parsed Markdown, box data used by the reader, and
 
 ## Local Markdown Query API
 
-The local Markdown query API lets local external tools read Markdown parse results that MinerU for Zotero has already saved through Zotero's built-in local HTTP server. It only queries existing local results. It does not submit new MinerU parsing jobs or directly expose the plugin data folder.
+The local source query API lets local external tools read saved MinerU Markdown or an on-demand arXiv LaTeX source through Zotero's built-in local HTTP server. It does not submit new MinerU parsing jobs or directly expose the plugin data folder.
 
 Main capabilities:
 
 - Search candidate Zotero items and PDF attachments by title keywords.
 - Read Markdown for a regular Zotero item or PDF attachment with `libraryID + key`.
 - Query at `full`, `headings`, `section`, or `search` granularity, so external agents can inspect structure before reading a section or keyword context.
+- Read numbered or fuzzy-matched sections, query tables by caption or content, and fetch saved images referenced as `images/...`.
 - Pass `attachmentKey` to select a specific PDF when a regular item has multiple PDF attachments.
 - Return precise Markdown first; if precise output is unavailable but lite output exists, return lite Markdown and mark it in `result.mode`.
+
+Compatibility note: `granularity=section` now returns grouped results under `groups`. Use `sectionNumber` for numbered headings and fuzzy `sectionPath` for partial heading/path matching. Tables are available from `/mineru-for-zotero/markdown/table`; images referenced as `images/...` are available from `/mineru-for-zotero/markdown/image`. The `/image` endpoint returns JSON `images` results with base64 `dataURL` values for both single and comma-separated image paths.
 
 ### Configuration
 
@@ -108,32 +113,32 @@ curl --get "http://127.0.0.1:23119/mineru-for-zotero/search" \
 Read the full Markdown:
 
 ```shell
-curl "http://127.0.0.1:23119/mineru-for-zotero/markdown?libraryID=1&key=ABCD1234" \
+curl "http://127.0.0.1:23119/mineru-for-zotero/markdown/read?libraryID=1&key=ABCD1234" \
   -H "Authorization: Bearer <token>"
 ```
 
 Read only the heading hierarchy:
 
 ```shell
-curl "http://127.0.0.1:23119/mineru-for-zotero/markdown?libraryID=1&key=ABCD1234&granularity=headings" \
+curl "http://127.0.0.1:23119/mineru-for-zotero/markdown/read?libraryID=1&key=ABCD1234&granularity=headings" \
   -H "Authorization: Bearer <token>"
 ```
 
 Read a specific section:
 
 ```shell
-curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/read" \
   --data-urlencode "libraryID=1" \
   --data-urlencode "key=ABCD1234" \
   --data-urlencode "granularity=section" \
-  --data-urlencode "sectionPath=Introduction/Background" \
+  --data-urlencode "sectionNumber=5.1,5.3-5.5" \
   -H "Authorization: Bearer <token>"
 ```
 
 Search Markdown and return surrounding paragraphs:
 
 ```shell
-curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/read" \
   --data-urlencode "libraryID=1" \
   --data-urlencode "key=ABCD1234" \
   --data-urlencode "granularity=search" \
@@ -142,18 +147,44 @@ curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown" \
   -H "Authorization: Bearer <token>"
 ```
 
+Find tables by caption or cell content:
+
+```shell
+curl --get "http://127.0.0.1:23119/mineru-for-zotero/markdown/table" \
+  --data-urlencode "libraryID=1" \
+  --data-urlencode "key=ABCD1234" \
+  --data-urlencode "q=Table 2" \
+  --data-urlencode "match=both" \
+  --data-urlencode "tableFormat=markdown" \
+  -H "Authorization: Bearer <token>"
+```
+
+Fetch a saved image referenced by Markdown with the CLI:
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown image \
+  --library-id 1 --key ABCD1234 --path images/a.jpg \
+  --token "<token>" --output a.jpg
+```
+
+The `/image` endpoint returns JSON for single and multiple paths. Each successful image includes a base64 `dataURL`; the CLI decodes it when saving the file.
+
 Common parameters:
 
-| Parameter           | Endpoint             | Description                                                                |
-| ------------------- | -------------------- | -------------------------------------------------------------------------- |
-| `libraryID`         | `search`, `markdown` | Zotero library ID. Personal libraries are usually `1`.                     |
-| `title`             | `search`             | Title keyword used to find candidate Zotero items.                         |
-| `key`               | `markdown`           | Zotero regular item key or PDF attachment key.                             |
-| `attachmentKey`     | `markdown`           | Selects the target PDF attachment when a regular item contains PDFs.       |
-| `granularity`       | `markdown`           | `full`, `headings`, `section`, or `search`. Defaults to `full`.            |
-| `sectionPath`       | `markdown`           | Heading path for `section` queries, for example `Introduction/Background`. |
-| `q`                 | `markdown`           | Keyword used by `search` queries.                                          |
-| `contextParagraphs` | `markdown`           | Number of context paragraphs around each `search` match.                   |
+| Parameter           | Endpoint                                | Description                                                          |
+| ------------------- | --------------------------------------- | -------------------------------------------------------------------- |
+| `libraryID`         | `search`, `markdown`, `tables`, `image` | Zotero library ID. Personal libraries are usually `1`.               |
+| `title`             | `search`                                | Title keyword used to find candidate Zotero items.                   |
+| `key`               | `markdown`, `tables`, `image`           | Zotero regular item key or PDF attachment key.                       |
+| `attachmentKey`     | `markdown`, `tables`, `image`           | Selects the target PDF attachment when a regular item contains PDFs. |
+| `granularity`       | `markdown`                              | `full`, `headings`, `section`, or `search`. Defaults to `full`.      |
+| `sectionNumber`     | `markdown`                              | Numbered section query for `section`, for example `5.1,5.3-5.5`.     |
+| `sectionPath`       | `markdown`                              | Fuzzy heading or path fragments for `section` queries.               |
+| `q`                 | `markdown`, `tables`                    | Keyword used by Markdown search or table queries.                    |
+| `contextParagraphs` | `markdown`                              | Number of context paragraphs around each `search` match.             |
+| `match`             | `tables`                                | Table matching mode: `caption`, `content`, or `both`.                |
+| `tableFormat`       | `tables`                                | Table output format: `html`, `markdown`, `tsv`, `latex`, or `json`.  |
+| `path`              | `image`                                 | Image path such as `images/a.jpg`, or comma-separated image paths.   |
 
 Common error codes:
 
@@ -166,19 +197,85 @@ Common error codes:
 
 ### Companion Skill and CLI
 
-The repository includes a companion Skill in `mineru-for-zotero-cli/`. It is intended for Codex or other local agents and wraps HTTP parameters, token headers, port detection, error hints, and readable text formatting. It has the same preconditions as the HTTP API: Zotero is running and the plugin's local Markdown query API is enabled. If the settings page requires a token, pass `--token <token>`.
+The repository includes two companion Skills: `mineru-for-zotero-cli/` for agents that can run the Node CLI, and `mineru-for-zotero-mcp/` for agents that can only connect to an MCP server. Both have the same preconditions as the HTTP API: Zotero is running and the plugin's local Markdown query API is enabled. If token validation is enabled, pass `--token <token>` to the CLI or configure `Authorization: Bearer <token>` in the MCP client.
 
 Run the CLI from the repository root:
 
 ```shell
-node mineru-for-zotero-cli/scripts/query-markdown.mjs search --library-id 1 --title "paper title" --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity section --section-path "Introduction/Background" --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity search --query "retrieval" --context-paragraphs 2 --token "<token>"
-node mineru-for-zotero-cli/scripts/query-markdown.mjs markdown --library-id 1 --key ABCD1234 --granularity full --format json --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs search --library-id 1 --title "paper title" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity section --section-number "5.1,5.3-5.5" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity search --query "retrieval" --context-paragraphs 2 --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown table --library-id 1 --key ABCD1234 --query "Table 2" --match both --table-format markdown --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown image --library-id 1 --key ABCD1234 --path "images/a.jpg" --output a.jpg --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs markdown read --library-id 1 --key ABCD1234 --granularity full --format json --token "<token>"
 ```
 
+LaTeX commands use the arXiv ID stored in the Zotero item's `extra` or `url`. Fetch the decompressed source first; an unversioned ID downloads the latest version, while an ID such as `arXiv:2401.12345v2` downloads that version:
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs latex fetch --library-id 1 --key ABCD1234 --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity headings --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity section --section-path "Main Results" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex read --library-id 1 --key ABCD1234 --granularity search --query "attention" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex table --library-id 1 --key ABCD1234 --query "Table 2" --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex image --library-id 1 --key ABCD1234 --path figures/model.pdf --output model.pdf --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs latex image --library-id 1 --key ABCD1234 --path imgs/one.pdf,imgs/two.pdf --output-dir extracted --token "<token>"
+```
+
+For CLI commands, `--library-id` is required for `search`, `markdown`, and `latex`; `--key` is required for every `markdown` and `latex` command. LaTeX sections require `--section-path`: use a case-insensitive exact full heading path separated by `/`, or a unique final title. LaTeX does not support `--section-number`, number ranges, or fuzzy path fragments. LaTeX search requires a non-empty `--query` and accepts `--context-paragraphs` (default `1`); matches report the source file and line. The `--table-format` option is available only for `markdown table`; `latex table` always returns the original LaTeX code and does not accept it.
+
+`latex table` always returns the original LaTeX table code. Use `latex fetch --refresh` to replace the stored source with a newly downloaded version.
+
 The CLI tries to read Zotero's local HTTP server port from the default Zotero profile. If it cannot, it uses `23119`. Add `--port <number>` to set the port manually. The default output is `--format text`, which is easier for agents to read directly. Use `--format json` for scripts and pipelines.
+
+For `image`, use `--output <file>` for a single path. For multiple comma-separated paths, use `--output-dir <dir>` so each image is written under that directory. LaTeX image output preserves source subdirectories such as `imgs/` and `logo/`; each requested path has its own status, duplicate paths are written once, and a partial failure returns a nonzero exit code while retaining successful files. Text and JSON output never include image base64 data. An ambiguous LaTeX section title returns candidate full paths; a missing section returns `section-not-found`.
+
+### Open Tabs and Selected Boxes
+
+Query the current reading context without supplying item identifiers:
+
+```shell
+node mineru-for-zotero-cli/scripts/query-source.mjs tabs list --scope all --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs tabs list --scope active --format json --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs boxes selected --scope all --token "<token>"
+node mineru-for-zotero-cli/scripts/query-source.mjs boxes selected --scope active --format json --token "<token>"
+```
+
+Both commands default to `--scope active`: the selected tab in the most recently active Zotero main window, even after switching to a terminal. A selected library tab returns no items. `tabs all` includes item tabs in every main window, including unloaded tabs; it excludes library tabs. `boxes all` includes live standalone PDF readers as well as background tab readers. Active box queries include all selected boxes in that tab, including boxes outside the viewport.
+
+Tab results contain `tabId`, `active`, `libraryId`, `itemId`, `itemKey`, `title`, `attachmentId`, `attachmentKey`, `tabTitle`, `status`, and `parseStatus`. Item fields identify the parent paper or the standalone attachment; attachment fields identify the actual opened attachment. PDF parse status contains `preciseReady`, `liteReady`, `preciseRunning`, `liteRunning`, and `preferredMode` (`precise`, `lite`, or null). A ready result may remain available while its replacement is running. Non-PDF tabs have null parseStatus; unavailable items or status reads are reported per tab as `item-unavailable` or `parse-status-unavailable`.
+
+Selected-box results are grouped under `readers`, with source identifiers, `readerInstanceId`, `selectedCount`, `boxes`, combined `markdown`, `missingRawIndexes`, and per-reader `status`. Boxes are ordered by rawIndex and use the existing box page numbering; formulas retain dollar delimiters and images remain Markdown references. Readers without selected boxes are omitted. When none remain, `readers` is empty and text output says `No selected boxes.`, with no tab metadata and no full-Markdown fallback. `stale-selection`, `parse-result-unavailable`, or `item-unavailable` preserve other successful groups and cause CLI exit code 1; normal empty results exit 0. Reading does not change selection or the clipboard and does not start parsing or downloads.
+
+The corresponding read-only HTTP routes are `GET /mineru-for-zotero/tabs?scope=all|active` and `GET /mineru-for-zotero/boxes/selected?scope=all|active`. They reuse existing API enablement and authorization. Invalid scope returns 400; per-item outcomes return 200. CLI JSON retains the existing envelope and marks `ok: false` for partial box failures.
+
+## MCP Query Service
+
+If an MCP client cannot run the Node CLI, connect it directly to the plugin's stateless Streamable HTTP MCP endpoint. It uses Zotero's existing local HTTP server and does not start another process or port:
+
+```text
+http://127.0.0.1:23119/mineru-for-zotero/mcp
+```
+
+Enable `Local Markdown Query API` in the plugin settings first. If token validation is enabled, add an `Authorization: Bearer <token>` header in the MCP client configuration. Replace `23119` when Zotero uses another local HTTP server port.
+
+For clients that support URL MCP servers, a configuration can look like this:
+
+```json
+{
+  "mcpServers": {
+    "mineru-for-zotero": {
+      "url": "http://127.0.0.1:23119/mineru-for-zotero/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+The endpoint exposes `zotero_search_items`, `mineru_read_markdown`, `mineru_query_markdown_table`, `mineru_get_markdown_image`, `mineru_fetch_latex`, `mineru_read_latex`, `mineru_query_latex_table`, `mineru_get_latex_image`, `zotero_list_tabs`, and `mineru_get_selected_boxes`. The two runtime tools accept only `{ "scope": "all" }` or `{ "scope": "active" }`, defaulting to active with `{}`; their results and scope rules match the CLI commands above. Partial box failures set `isError: true` while retaining successful content. Query tools return both structured data and readable text; image tools also return MCP image content blocks. The service is stateless, so each JSON-RPC request is independent, and the endpoint is removed when the plugin shuts down.
 
 ## Troubleshooting
 
