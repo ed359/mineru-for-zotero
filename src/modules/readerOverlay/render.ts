@@ -992,6 +992,8 @@ export function formatBoxTypeLabel(type: string): string {
     text: { id: "reader-box-type-text", fallback: "Text" },
     paragraph: { id: "reader-box-type-text", fallback: "Text" },
     title: { id: "reader-box-type-title", fallback: "Title" },
+    doc_title: { id: "reader-box-type-title", fallback: "Title" },
+    paragraph_title: { id: "reader-box-type-title", fallback: "Title" },
     list: { id: "reader-box-type-list", fallback: "List" },
     table: { id: "reader-box-type-table", fallback: "Table" },
     table_body: { id: "reader-box-type-table", fallback: "Table" },

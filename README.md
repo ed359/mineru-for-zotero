@@ -26,8 +26,8 @@ MinerU for Zotero helps you parse Zotero PDF attachments with MinerU and copy la
 
 ## Requirements
 
-- Zotero 8 or 9.
-- A MinerU API Key.
+- Zotero 8, 9, or 10.
+- A MinerU API Key, or a local MinerU server (see [Local MinerU](#local-mineru)).
 - PDF attachments that are available on this computer.
 
 ## Setup
@@ -38,6 +38,21 @@ MinerU for Zotero helps you parse Zotero PDF attachments with MinerU and copy la
 4. Optional: enable `Save parsed result images` if you want images from MinerU results to be saved locally.
 
 The API Key is stored only in local Zotero preferences.
+
+### Local MinerU
+
+To parse on your own machine instead of the MinerU online service, run a local MinerU API server and point the plugin at it:
+
+1. Install MinerU and start its API server, for example `mineru-api` (listens on `http://127.0.0.1:8000` by default).
+2. In `Edit` -> `Settings` -> `MinerU for Zotero`, set `API Type` to `Local API`.
+3. Set `Local API URL` to the server address. No API Key is needed.
+
+The plugin detects the server version automatically:
+
+- MinerU 4.x uses the `/v1` task API: `GET /v1/health`, `POST /v1/tasks`, an upload `PUT` to the returned upload URL, polling `GET /v1/tasks/{task_id}`, and downloading the result ZIP from the file's `result_url`. `Precise Parse` uses the server's default tier (normally `standard`). `Lite Parse` requests the `flash` tier when the server lists it in `/v1/tiers`.
+- MinerU 3.x uses the older `GET /health`, multipart `POST /tasks`, `GET /tasks/{task_id}`, and `GET /tasks/{task_id}/result` API.
+
+If the MinerU 4.x server is still loading models, `/v1/health` answers `503` and the plugin reports the health check failure instead of submitting the PDF. For long documents on slow hardware, raise `Local API timeout (minutes)`.
 
 ## Parse a PDF
 

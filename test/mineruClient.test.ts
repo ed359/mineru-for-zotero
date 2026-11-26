@@ -36,7 +36,380 @@ describe("mineruClient", function () {
     assert.equal(calls[0], "POST https://mineru.net/api/v4/file-urls/batch");
   });
 
-  it("checks local health before submitting a local task", async function () {
+  it("submits MinerU 4.x local tasks through the /v1 task and upload flow", async function () {
+    const calls: Array<{ method: string; url: string; init?: RequestInit }> =
+      [];
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "precise",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000/",
+      readBinary: async () => new Uint8Array([37, 80, 68, 70]),
+      fetch: async (url, init) => {
+        const method = init?.method ?? "GET";
+        calls.push({ method, url: String(url), init });
+        if (String(url).endsWith("/v1/health")) {
+          return jsonResponse({ status: "ok", version: "4.2.3" });
+        }
+        if (method === "POST" && String(url).endsWith("/v1/tasks")) {
+          return jsonResponse(v1CreatedTask(), 202);
+        }
+        return jsonResponse({ status: "pending" });
+      },
+    });
+
+    const result = await client.submitPdf(
+      "C:/tmp/Wang 等 - 2023 - A Long Title.pdf",
+    );
+
+    assert.deepEqual(result, { taskID: "job_1" });
+    assert.deepEqual(
+      calls.map((call) => `${call.method} ${call.url}`),
+      [
+        "GET http://127.0.0.1:8000/v1/health",
+        "POST http://127.0.0.1:8000/v1/tasks",
+        "PUT http://127.0.0.1:8000/v1/tasks/job_1/uploads/file-1",
+      ],
+    );
+    const createBody = JSON.parse(String(calls[1].init?.body));
+    assert.deepEqual(createBody, {
+      output_formats: ["default"],
+      files: [{ file_name: "mineru-local.pdf", bytes: 4 }],
+    });
+    assert.equal(
+      headerValue(calls[1].init?.headers, "Content-Type"),
+      "application/json",
+    );
+    assert.equal(
+      headerValue(calls[2].init?.headers, "Content-Type"),
+      "application/octet-stream",
+    );
+    assert.deepEqual(
+      Array.from(calls[2].init?.body as Uint8Array),
+      [37, 80, 68, 70],
+    );
+  });
+
+  it("requests the flash tier for MinerU 4.x local lite tasks when available", async function () {
+    let createBody: Record<string, unknown> | undefined;
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "lite",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      readBinary: async () => new Uint8Array([1, 2, 3]),
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/v1/health")) {
+          return jsonResponse({ status: "ok" });
+        }
+        if (String(url).endsWith("/v1/tiers")) {
+          return jsonResponse({
+            object: "list",
+            data: [{ id: "flash" }, { id: "standard" }],
+          });
+        }
+        if (init?.method === "POST") {
+          createBody = JSON.parse(String(init.body));
+          return jsonResponse(v1CreatedTask(), 202);
+        }
+        return jsonResponse({ status: "pending" });
+      },
+    });
+
+    await client.submitPdf("C:/tmp/a.pdf");
+
+    assert.equal(createBody?.tier, "flash");
+  });
+
+  it("omits the tier for MinerU 4.x local lite tasks when flash is unavailable", async function () {
+    let createBody: Record<string, unknown> | undefined;
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "lite",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      readBinary: async () => new Uint8Array([1, 2, 3]),
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/v1/health")) {
+          return jsonResponse({ status: "ok" });
+        }
+        if (String(url).endsWith("/v1/tiers")) {
+          return jsonResponse({ object: "list", data: [{ id: "standard" }] });
+        }
+        if (init?.method === "POST") {
+          createBody = JSON.parse(String(init.body));
+          return jsonResponse(v1CreatedTask(), 202);
+        }
+        return jsonResponse({ status: "pending" });
+      },
+    });
+
+    await client.submitPdf("C:/tmp/a.pdf");
+
+    assert.notProperty(createBody, "tier");
+  });
+
+  it("reports MinerU 4.x local health failures without falling back", async function () {
+    const calls: string[] = [];
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "precise",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      readBinary: async () => new Uint8Array([1]),
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse(
+          { error: { code: "not_ready", message: "models loading" } },
+          503,
+        );
+      },
+    });
+
+    try {
+      await client.submitPdf("C:/tmp/a.pdf");
+      assert.fail("Expected submitPdf to throw");
+    } catch (error) {
+      assert.instanceOf(error, MinerURequestError);
+      assert.equal((error as MinerURequestError).stage, "local-health");
+      assert.equal((error as MinerURequestError).status, 503);
+      assert.include((error as Error).message, "models loading");
+    }
+    assert.deepEqual(calls, ["http://127.0.0.1:8000/v1/health"]);
+  });
+
+  it("throws task errors when the MinerU 4.x submit response misses the upload URL", async function () {
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "precise",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      readBinary: async () => new Uint8Array([1]),
+      fetch: async (url) =>
+        String(url).endsWith("/v1/health")
+          ? jsonResponse({ status: "ok" })
+          : jsonResponse(
+              {
+                task_id: "job_1",
+                status: "pending",
+                files: [{ file_id: "file-1", status: "pending" }],
+              },
+              202,
+            ),
+    });
+
+    try {
+      await client.submitPdf("C:/tmp/a.pdf");
+      assert.fail("Expected submitPdf to throw");
+    } catch (error) {
+      assert.instanceOf(error, MinerUTaskError);
+      assert.include((error as Error).message, "missing upload URL");
+    }
+  });
+
+  it("maps MinerU 4.x local file states to MinerU task status", async function () {
+    const states: Array<[unknown, unknown]> = [
+      [
+        { status: "pending", files: [{ status: "waiting-file" }] },
+        { status: "running" },
+      ],
+      [
+        { status: "running", files: [{ status: "running" }] },
+        { status: "running" },
+      ],
+      [
+        { status: "completed", files: [{ status: "completed" }] },
+        { status: "succeeded" },
+      ],
+      [
+        {
+          status: "failed",
+          files: [
+            {
+              status: "failed",
+              error: { code: "parse_failed", message: "bad pdf" },
+            },
+          ],
+        },
+        { status: "failed", error: "bad pdf" },
+      ],
+      [
+        { status: "canceled", files: [{ status: "canceled" }] },
+        { status: "failed", error: "Local MinerU task canceled" },
+      ],
+    ];
+    for (const [response, expected] of states) {
+      const calls: string[] = [];
+      const client = createMinerUClientForSettings({
+        source: "local",
+        mode: "precise",
+        apiKey: "",
+        localApiBaseURL: "http://127.0.0.1:8000",
+        fetch: async (url) => {
+          calls.push(String(url));
+          return jsonResponse({ task_id: "job_1", ...(response as object) });
+        },
+      });
+
+      assert.deepEqual(await client.pollTask("job_1"), expected);
+      assert.deepEqual(calls, ["http://127.0.0.1:8000/v1/tasks/job_1"]);
+    }
+  });
+
+  it("downloads MinerU 4.x local precise results from the polled result URL", async function () {
+    const raw = {
+      schema: "docvortex.middle",
+      pages: [
+        {
+          page_idx: 0,
+          blocks: [{ type: "text", bbox: [0.1, 0.1, 0.5, 0.2], content: [] }],
+        },
+      ],
+    };
+    const calls: string[] = [];
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "precise",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      readBinary: async () => new Uint8Array([1]),
+      fetch: async (url, init) => {
+        calls.push(`${init?.method ?? "GET"} ${String(url)}`);
+        if (String(url).endsWith("/v1/health")) {
+          return jsonResponse({ status: "ok" });
+        }
+        if (init?.method === "POST") {
+          return jsonResponse(v1CreatedTask(), 202);
+        }
+        if (init?.method === "PUT") {
+          return jsonResponse({ status: "pending" });
+        }
+        if (String(url).endsWith("/v1/tasks/job_1")) {
+          return jsonResponse({
+            task_id: "job_1",
+            status: "completed",
+            files: [
+              {
+                file_id: "file-1",
+                status: "completed",
+                result_url:
+                  "http://127.0.0.1:8000/v1/files/file-1-result/content",
+              },
+            ],
+          });
+        }
+        return new Response(
+          createStoredZipBytes({
+            "markdown.md": "# Precise v1",
+            "structured_content.json": JSON.stringify({ pages: [] }),
+            "middle_json.json": JSON.stringify(raw),
+            "images/page_0_image_1.jpg": new Uint8Array([9, 8, 7]),
+          }),
+          { headers: { "Content-Type": "application/zip" } },
+        );
+      },
+    });
+
+    const { taskID } = await client.submitPdf("C:/tmp/a.pdf");
+    assert.deepEqual(await client.pollTask(taskID), { status: "succeeded" });
+    const result = await client.downloadResult(taskID);
+
+    assert.equal(
+      calls.at(-1),
+      "GET http://127.0.0.1:8000/v1/files/file-1-result/content",
+    );
+    assert.equal(result.kind, "precise");
+    if (result.kind !== "precise") {
+      assert.fail("Expected precise result");
+    }
+    assert.equal(result.markdown, "# Precise v1");
+    assert.deepEqual(result.rawResult, raw);
+    assert.deepEqual(
+      result.images?.map((image) => [image.path, Array.from(image.bytes)]),
+      [["page_0_image_1.jpg", [9, 8, 7]]],
+    );
+  });
+
+  it("skips MinerU 4.x local images when saving images is disabled", async function () {
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "precise",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      saveImages: false,
+      fetch: async (url) =>
+        String(url).endsWith("/v1/tasks/job_1")
+          ? jsonResponse({
+              task_id: "job_1",
+              status: "completed",
+              files: [
+                {
+                  file_id: "file-1",
+                  status: "completed",
+                  result_url: "/v1/files/file-1/content",
+                },
+              ],
+            })
+          : new Response(
+              createStoredZipBytes({
+                "markdown.md": "# Precise v1",
+                "middle_json.json": JSON.stringify({ pages: [] }),
+                "images/a.jpg": new Uint8Array([1]),
+              }),
+              { headers: { "Content-Type": "application/zip" } },
+            ),
+    });
+
+    const result = await client.downloadResult("job_1");
+
+    assert.equal(result.kind, "precise");
+    if (result.kind !== "precise") {
+      assert.fail("Expected precise result");
+    }
+    assert.isUndefined(result.images);
+  });
+
+  it("downloads MinerU 4.x local lite markdown from the result zip", async function () {
+    const calls: string[] = [];
+    const client = createMinerUClientForSettings({
+      source: "local",
+      mode: "lite",
+      apiKey: "",
+      localApiBaseURL: "http://127.0.0.1:8000",
+      fetch: async (url) => {
+        calls.push(String(url));
+        return String(url).endsWith("/v1/tasks/job_1")
+          ? jsonResponse({
+              task_id: "job_1",
+              status: "completed",
+              files: [
+                {
+                  file_id: "file-1",
+                  status: "completed",
+                  result_url: "/v1/files/file-1/content",
+                },
+              ],
+            })
+          : new Response(
+              createDeflatedZipBytes({
+                "markdown.md": "# Lite v1",
+                "middle_json.json": JSON.stringify({ pages: [] }),
+              }),
+              { headers: { "Content-Type": "application/zip" } },
+            );
+      },
+    });
+
+    const result = await client.downloadResult("job_1");
+
+    assert.deepEqual(result, { kind: "lite", markdown: "# Lite v1" });
+    assert.deepEqual(calls, [
+      "http://127.0.0.1:8000/v1/tasks/job_1",
+      "http://127.0.0.1:8000/v1/files/file-1/content",
+    ]);
+  });
+
+  it("falls back to the MinerU 3.x local API when /v1/health is missing", async function () {
     const calls: string[] = [];
     const client = createMinerUClientForSettings({
       source: "local",
@@ -44,23 +417,25 @@ describe("mineruClient", function () {
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
       readBinary: async () => new Uint8Array([1, 2, 3]),
-      fetch: async (url, init) => {
+      fetch: legacyServer(async (url, init) => {
         calls.push(`${init?.method ?? "GET"} ${String(url)}`);
         if (String(url).endsWith("/health")) {
           return jsonResponse({ status: "healthy" });
         }
         return jsonResponse({ task_id: "local-task" }, 202);
-      },
+      }),
     });
 
     const result = await client.submitPdf("C:/tmp/a.pdf");
 
     assert.deepEqual(result, { taskID: "local-task" });
-    assert.equal(calls[0], "GET http://127.0.0.1:8000/health");
-    assert.equal(calls[1], "POST http://127.0.0.1:8000/tasks");
+    assert.deepEqual(calls, [
+      "GET http://127.0.0.1:8000/health",
+      "POST http://127.0.0.1:8000/tasks",
+    ]);
   });
 
-  it("submits local lite tasks with markdown-only result flags", async function () {
+  it("submits MinerU 3.x local lite tasks with markdown-only result flags", async function () {
     let submittedBody: Uint8Array | undefined;
     const client = createMinerUClientForSettings({
       source: "local",
@@ -68,13 +443,13 @@ describe("mineruClient", function () {
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
       readBinary: async () => new Uint8Array([1, 2, 3]),
-      fetch: async (url, init) => {
+      fetch: legacyServer(async (url, init) => {
         if (String(url).endsWith("/health")) {
           return jsonResponse({ status: "healthy" });
         }
         submittedBody = init?.body as Uint8Array;
         return jsonResponse({ task_id: "local-task" }, 202);
-      },
+      }),
     });
 
     await client.submitPdf("C:/tmp/a.pdf");
@@ -94,7 +469,7 @@ describe("mineruClient", function () {
     assert.equal(fields.return_original_file, "false");
   });
 
-  it("submits local lite tasks without global FormData or Blob", async function () {
+  it("submits MinerU 3.x local lite tasks without global FormData or Blob", async function () {
     const globals = globalThis as typeof globalThis & {
       FormData?: typeof FormData;
       Blob?: typeof Blob;
@@ -113,14 +488,14 @@ describe("mineruClient", function () {
         apiKey: "",
         localApiBaseURL: "http://127.0.0.1:8000",
         readBinary: async () => new Uint8Array([37, 80, 68, 70]),
-        fetch: async (url, init) => {
+        fetch: legacyServer(async (url, init) => {
           if (String(url).endsWith("/health")) {
             return jsonResponse({ status: "healthy" });
           }
           submittedBody = init?.body as Uint8Array;
           submittedContentType = headerValue(init?.headers, "Content-Type");
           return jsonResponse({ task_id: "local-task" }, 202);
-        },
+        }),
       });
 
       const result = await client.submitPdf("C:/tmp/a.pdf");
@@ -143,7 +518,7 @@ describe("mineruClient", function () {
     }
   });
 
-  it("uses a short upload filename for local tasks", async function () {
+  it("uses a short upload filename for MinerU 3.x local tasks", async function () {
     const longTitle =
       "Wang 等 - 2023 - Survey on Factuality in Large Language Models Knowledge, Retrieval and Domain-Specificity.pdf";
     let submittedBody: Uint8Array | undefined;
@@ -153,13 +528,13 @@ describe("mineruClient", function () {
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
       readBinary: async () => new Uint8Array([37, 80, 68, 70]),
-      fetch: async (url, init) => {
+      fetch: legacyServer(async (url, init) => {
         if (String(url).endsWith("/health")) {
           return jsonResponse({ status: "healthy" });
         }
         submittedBody = init?.body as Uint8Array;
         return jsonResponse({ task_id: "local-task" }, 202);
-      },
+      }),
     });
 
     await client.submitPdf(`C:/tmp/${longTitle}`);
@@ -169,7 +544,7 @@ describe("mineruClient", function () {
     assert.notInclude(multipart, longTitle);
   });
 
-  it("submits local precise tasks through the default fetch path", async function () {
+  it("submits local tasks through the default fetch path", async function () {
     const globals = globalThis as typeof globalThis & {
       fetch?: typeof fetch;
     };
@@ -177,7 +552,7 @@ describe("mineruClient", function () {
     const originalRequest = Zotero.HTTP.request;
     const calls: string[] = [];
     let submittedBody: Uint8Array | undefined;
-    globals.fetch = (async (url, init) => {
+    globals.fetch = legacyServer(async (url, init) => {
       calls.push(`${init?.method ?? "GET"} ${String(url)}`);
       if (String(url).endsWith("/health")) {
         return jsonResponse({ status: "healthy" });
@@ -225,36 +600,39 @@ describe("mineruClient", function () {
     }
   });
 
-  it("maps local task polling states to MinerU task status", async function () {
+  it("maps MinerU 3.x local task polling states to MinerU task status", async function () {
     const calls: string[] = [];
     const client = createMinerUClientForSettings({
       source: "local",
       mode: "precise",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000/",
-      fetch: async (url, init) => {
+      readBinary: async () => new Uint8Array([1]),
+      fetch: legacyTaskServer(async (url, init) => {
         calls.push(`${init?.method ?? "GET"} ${String(url)}`);
         return jsonResponse({ status: "completed" });
-      },
+      }),
     });
 
+    await client.submitPdf("C:/tmp/a.pdf");
     const result = await client.pollTask("local-task");
 
     assert.deepEqual(result, { status: "succeeded" });
     assert.deepEqual(calls, ["GET http://127.0.0.1:8000/tasks/local-task"]);
   });
 
-  it("throws task errors when local submit response misses task id", async function () {
+  it("throws task errors when MinerU 3.x local submit response misses task id", async function () {
     const client = createMinerUClientForSettings({
       source: "local",
       mode: "lite",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
       readBinary: async () => new Uint8Array([1, 2, 3]),
-      fetch: async (url) =>
+      fetch: legacyServer(async (url) =>
         String(url).endsWith("/health")
           ? jsonResponse({ status: "healthy" })
           : jsonResponse({}),
+      ),
     });
 
     try {
@@ -266,26 +644,29 @@ describe("mineruClient", function () {
     }
   });
 
-  it("downloads local lite markdown from JSON results", async function () {
+  it("downloads MinerU 3.x local lite markdown from JSON results", async function () {
     const client = createMinerUClientForSettings({
       source: "local",
       mode: "lite",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
-      fetch: async () =>
+      readBinary: async () => new Uint8Array([1]),
+      fetch: legacyTaskServer(async () =>
         jsonResponse({
           results: {
             "a.pdf": { md_content: "# Lite" },
           },
         }),
+      ),
     });
 
+    await client.submitPdf("C:/tmp/a.pdf");
     const result = await client.downloadResult("local-task");
 
     assert.deepEqual(result, { kind: "lite", markdown: "# Lite" });
   });
 
-  it("downloads local precise markdown and raw result from JSON results", async function () {
+  it("downloads MinerU 3.x local precise markdown and raw result from JSON results", async function () {
     const raw = {
       pdf_info: [{ page_idx: 0, page_size: [100, 200], para_blocks: [] }],
     };
@@ -294,7 +675,8 @@ describe("mineruClient", function () {
       mode: "precise",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
-      fetch: async () =>
+      readBinary: async () => new Uint8Array([1]),
+      fetch: legacyTaskServer(async () =>
         jsonResponse({
           results: {
             "a.pdf": {
@@ -304,8 +686,10 @@ describe("mineruClient", function () {
             },
           },
         }),
+      ),
     });
 
+    await client.submitPdf("C:/tmp/a.pdf");
     const result = await client.downloadResult("local-task");
 
     assert.equal(result.kind, "precise");
@@ -316,7 +700,7 @@ describe("mineruClient", function () {
     assert.deepEqual(result.rawResult, raw);
   });
 
-  it("downloads local precise results from zip responses", async function () {
+  it("downloads MinerU 3.x local precise results from zip responses", async function () {
     const raw = {
       pdf_info: [{ page_idx: 0, page_size: [100, 200], para_blocks: [] }],
     };
@@ -325,16 +709,20 @@ describe("mineruClient", function () {
       mode: "precise",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
-      fetch: async () =>
-        new Response(
-          createStoredZipBytes({
-            "a.md": "# Precise Zip",
-            "a_middle.json": JSON.stringify(raw),
-          }),
-          { headers: { "Content-Type": "application/octet-stream" } },
-        ),
+      readBinary: async () => new Uint8Array([1]),
+      fetch: legacyTaskServer(
+        async () =>
+          new Response(
+            createStoredZipBytes({
+              "a.md": "# Precise Zip",
+              "a_middle.json": JSON.stringify(raw),
+            }),
+            { headers: { "Content-Type": "application/octet-stream" } },
+          ),
+      ),
     });
 
+    await client.submitPdf("C:/tmp/a.pdf");
     const result = await client.downloadResult("local-task");
 
     assert.equal(result.kind, "precise");
@@ -345,22 +733,26 @@ describe("mineruClient", function () {
     assert.deepEqual(result.rawResult, raw);
   });
 
-  it("downloads local lite markdown from zip responses", async function () {
+  it("downloads MinerU 3.x local lite markdown from zip responses", async function () {
     const client = createMinerUClientForSettings({
       source: "local",
       mode: "lite",
       apiKey: "",
       localApiBaseURL: "http://127.0.0.1:8000",
-      fetch: async () =>
-        new Response(
-          createStoredZipBytes({
-            "a.md": "# Lite Zip",
-            "a_middle.json": JSON.stringify({ ignored: true }),
-          }),
-          { headers: { "Content-Type": "application/zip" } },
-        ),
+      readBinary: async () => new Uint8Array([1]),
+      fetch: legacyTaskServer(
+        async () =>
+          new Response(
+            createStoredZipBytes({
+              "a.md": "# Lite Zip",
+              "a_middle.json": JSON.stringify({ ignored: true }),
+            }),
+            { headers: { "Content-Type": "application/zip" } },
+          ),
+      ),
     });
 
+    await client.submitPdf("C:/tmp/a.pdf");
     const result = await client.downloadResult("local-task");
 
     assert.deepEqual(result, { kind: "lite", markdown: "# Lite Zip" });
@@ -382,19 +774,31 @@ describe("mineruClient", function () {
         mode: "precise",
         apiKey: "",
         localApiBaseURL: "http://127.0.0.1:8000",
-        fetch: async () =>
-          new Response(
-            createDeflatedZipBytes({
-              "a.md": "# Precise Zip",
-              "a_middle.json": JSON.stringify(raw),
-            }),
-            { headers: { "Content-Type": "application/zip" } },
-          ),
+        fetch: async (url) =>
+          String(url).endsWith("/v1/tasks/job_1")
+            ? jsonResponse({
+                task_id: "job_1",
+                status: "completed",
+                files: [
+                  {
+                    file_id: "file-1",
+                    status: "completed",
+                    result_url: "/v1/files/file-1/content",
+                  },
+                ],
+              })
+            : new Response(
+                createDeflatedZipBytes({
+                  "markdown.md": "# Precise Zip",
+                  "middle_json.json": JSON.stringify(raw),
+                }),
+                { headers: { "Content-Type": "application/zip" } },
+              ),
       });
 
       let result: Awaited<ReturnType<typeof client.downloadResult>>;
       try {
-        result = await client.downloadResult("local-task");
+        result = await client.downloadResult("job_1");
       } catch (error) {
         assert.fail(
           error instanceof Error
@@ -1439,6 +1843,49 @@ function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function v1CreatedTask() {
+  return {
+    task_id: "job_1",
+    status: "waiting-file",
+    files: [
+      {
+        file_id: "file-1",
+        file_name: "mineru-local.pdf",
+        status: "waiting-file",
+        upload: {
+          url: "http://127.0.0.1:8000/v1/tasks/job_1/uploads/file-1",
+          headers: { "Content-Type": "application/octet-stream" },
+          expires_at: 1,
+        },
+      },
+    ],
+  };
+}
+
+/** Simulate a MinerU 3.x server, which has no `/v1/health` endpoint. */
+function legacyServer(handler: typeof fetch): typeof fetch {
+  return (async (url: RequestInfo | URL, init?: RequestInit) =>
+    String(url).endsWith("/v1/health")
+      ? jsonResponse({ detail: "Not Found" }, 404)
+      : handler(url, init)) as typeof fetch;
+}
+
+/**
+ * Simulate a MinerU 3.x server that accepts a submit as task `local-task` and
+ * answers every later request with `handler`.
+ */
+function legacyTaskServer(handler: typeof fetch): typeof fetch {
+  return legacyServer(async (url, init) => {
+    if (String(url).endsWith("/health")) {
+      return jsonResponse({ status: "healthy" });
+    }
+    if (init?.method === "POST" && String(url).endsWith("/tasks")) {
+      return jsonResponse({ task_id: "local-task" }, 202);
+    }
+    return handler(url, init);
   });
 }
 

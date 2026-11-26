@@ -22,13 +22,22 @@ interface RawBlock {
   poly?: number[];
   markdown?: string;
   text?: string;
-  content?: string;
+  /**
+   * MinerU 3.x and the online API use a string. MinerU 4.x
+   * (`docvortex.middle` 2.0) uses an array of inline spans, or of child blocks
+   * that carry their own bbox (image_body, table_body, code_body, captions).
+   */
+  content?: string | RawContentItem[];
   html?: string;
   latex?: string;
   formula?: string;
   image_path?: string;
   blocks?: RawBlock[];
   lines?: Array<{ spans?: RawSpan[] }>;
+}
+
+interface RawContentItem extends RawBlock {
+  url?: string;
 }
 
 interface RawSpan {
@@ -97,6 +106,10 @@ function extractPages(result: unknown): RawPage[] {
   return value.pages ?? value.pdf_info ?? [];
 }
 
+/**
+ * MinerU 4.x pages carry no size and already use 0-1 normalized bboxes, so the
+ * default size of 1 keeps their coordinates unchanged.
+ */
 function getPageSize(page: RawPage): [number, number] {
   const width = Number(
     page.width ?? page.page_width ?? page.page_size?.[0] ?? 1,
@@ -128,14 +141,38 @@ function getPageBlocks(page: RawPage): RawBlock[] {
 }
 
 function flattenBlock(block: RawBlock): RawBlock[] {
-  if (!Array.isArray(block.blocks) || block.blocks.length === 0) {
+  const childBlocks = getChildBlocks(block);
+  if (childBlocks.length === 0) {
     return [block];
   }
-  const children = block.blocks.flatMap(flattenBlock);
+  const children = childBlocks.flatMap(flattenBlock);
   if (shouldDropStructuralParentBlock(block, children)) {
     return children;
   }
   return [block, ...children];
+}
+
+/**
+ * Read child blocks. Older schemas use `blocks`; MinerU 4.x nests child blocks
+ * inside the `content` array, distinguished from inline spans by their bbox.
+ */
+function getChildBlocks(block: RawBlock): RawBlock[] {
+  if (Array.isArray(block.blocks) && block.blocks.length > 0) {
+    return block.blocks;
+  }
+  if (Array.isArray(block.content)) {
+    return block.content.filter(isContentChildBlock);
+  }
+  return [];
+}
+
+function isContentChildBlock(item: RawContentItem): boolean {
+  return (
+    item !== null &&
+    typeof item === "object" &&
+    Boolean(item.type) &&
+    getBlockBbox(item) !== null
+  );
 }
 
 function shouldDropStructuralParentBlock(
@@ -199,12 +236,54 @@ function getBlockMarkdown(block: RawBlock): string {
   return String(
     block.markdown ??
       block.text ??
-      block.content ??
+      getContentText(block.content) ??
       block.html ??
       block.latex ??
       getLinesText(block) ??
       "",
   );
+}
+
+/**
+ * Read a block's `content`. Strings pass through unchanged; span arrays are
+ * joined into Markdown text (inline equations wrapped in `$`), and child
+ * blocks are left out because they become boxes of their own.
+ */
+function getContentText(content: RawBlock["content"]): string | null {
+  if (content == null) {
+    return null;
+  }
+  if (!Array.isArray(content)) {
+    return String(content);
+  }
+  const text = content
+    .filter((item) => !isContentChildBlock(item))
+    .map(formatContentSpan)
+    .join("")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+  return text || null;
+}
+
+function formatContentSpan(item: RawContentItem | string): string {
+  if (typeof item === "string") {
+    return item;
+  }
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const text = Array.isArray(item.content)
+    ? item.content.map(formatContentSpan).join("")
+    : String(item.content ?? item.text ?? "");
+  if (isInlineEquationType(item.type)) {
+    const formula = text.trim();
+    return formula ? `$${formula}$` : "";
+  }
+  if (String(item.type ?? "").toLowerCase() === "hyperlink" && item.url) {
+    const label = text.trim();
+    return label && label !== item.url ? `[${label}](${item.url})` : text;
+  }
+  return text;
 }
 
 function getBlockFormula(block: RawBlock, markdown: string): string | null {
@@ -218,10 +297,15 @@ function getBlockTableFormats(
   block: RawBlock,
   markdown: string,
 ): NonNullable<NormalizedBox["tableFormats"]> | undefined {
+  const contentHtml = getContentHtml(block);
   const formats = {
     latex: normalizeFormatText(block.latex),
-    markdown: normalizeFormatText(block.markdown ?? markdown),
-    html: normalizeFormatText(block.html ?? readRawField(block, "table_body")),
+    markdown: normalizeFormatText(
+      block.markdown ?? (markdown === contentHtml ? undefined : markdown),
+    ),
+    html: normalizeFormatText(
+      block.html ?? readRawField(block, "table_body") ?? contentHtml,
+    ),
     tsv: normalizeFormatText(readRawField(block, "tsv")),
   };
 
@@ -234,7 +318,7 @@ function getBlockTableFormats(
     }
   }
 
-  for (const child of block.blocks ?? []) {
+  for (const child of getChildBlocks(block)) {
     const childType = normalizeType(
       child.type ?? child.block_type ?? child.category_type,
     );
@@ -249,6 +333,14 @@ function getBlockTableFormats(
     formats.tsv ??= childFormats?.tsv;
   }
   return compactTableFormats(formats);
+}
+
+/** MinerU 4.x table_body blocks carry the HTML table directly in `content`. */
+function getContentHtml(block: RawBlock): string | undefined {
+  if (typeof block.content !== "string") {
+    return undefined;
+  }
+  return /^\s*<table[\s>]/i.test(block.content) ? block.content : undefined;
 }
 
 function compactTableFormats(
@@ -287,7 +379,7 @@ function getBlockImagePath(block: RawBlock): string | null {
     }
   }
 
-  for (const child of block.blocks ?? []) {
+  for (const child of getChildBlocks(block)) {
     const childPath = getBlockImagePath(child);
     if (childPath) {
       return childPath;

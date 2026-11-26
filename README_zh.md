@@ -26,8 +26,8 @@ MinerU for Zotero 可以帮你在 Zotero 中调用 MinerU 解析 PDF attachment�
 
 ## 使用前准备
 
-- Zotero 8 或 9。
-- MinerU API Key。
+- Zotero 8、9 或 10。
+- MinerU API Key，或本地 MinerU 服务（见[本地 MinerU](#本地-mineru)）。
 - PDF attachment 已经在当前电脑本地可用。
 
 ## 设置
@@ -38,6 +38,21 @@ MinerU for Zotero 可以帮你在 Zotero 中调用 MinerU 解析 PDF attachment�
 4. 可选：开启 `保存解析结果图片`，将 MinerU 结果中的图片保存到本地。
 
 API Key 只保存在本机 Zotero 首选项中。
+
+### 本地 MinerU
+
+如需在本机解析而不是使用 MinerU 在线服务，请运行本地 MinerU API 服务并在插件中填写地址：
+
+1. 安装 MinerU 并启动 API 服务，例如 `mineru-api`（默认监听 `http://127.0.0.1:8000`）。
+2. 在 `编辑` -> `设置` -> `MinerU for Zotero` 中，将 `API 类型` 设为 `本地 API`。
+3. 将 `本地 API 地址` 设为服务地址。本地模式不需要 API Key。
+
+插件会自动识别服务版本：
+
+- MinerU 4.x 使用 `/v1` 任务接口：`GET /v1/health`、`POST /v1/tasks`、向返回的上传地址 `PUT` 文件、轮询 `GET /v1/tasks/{task_id}`，再从文件的 `result_url` 下载结果 ZIP。`精准解析` 使用服务端默认档位（通常为 `standard`）；当 `/v1/tiers` 列出 `flash` 时，`轻量解析` 使用 `flash` 档位。
+- MinerU 3.x 使用旧接口：`GET /health`、multipart `POST /tasks`、`GET /tasks/{task_id}` 和 `GET /tasks/{task_id}/result`。
+
+如果 MinerU 4.x 服务仍在加载模型，`/v1/health` 会返回 `503`，插件会报告健康检查失败而不会提交 PDF。在较慢的机器上解析长文档时，请调大 `本地 API 超时时间（分钟）`。
 
 ## 解析 PDF
 

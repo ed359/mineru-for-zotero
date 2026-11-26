@@ -1,39 +1,41 @@
-import { requestJson, requestOk } from "./api";
-import { MinerUTaskError } from "./errors";
+import { requestOk } from "./api";
+import { MinerURequestError } from "./errors";
 import { readFileBytes, readPdfBytes } from "./file";
-import { buildLocalTaskFormData } from "./formData";
-import { createFormDataRequest, normalizeBinary } from "./http";
+import {
+  createFormDataRequest,
+  errorMessage,
+  normalizeBinary,
+  responseErrorDetail,
+} from "./http";
+import {
+  downloadLegacyLocalResult,
+  pollLegacyLocalTask,
+  submitLegacyLocalTask,
+} from "./localLegacy";
+import {
+  downloadV1LocalResult,
+  pollV1LocalTask,
+  submitV1LocalTask,
+} from "./localV1";
 import { normalizeBaseURL } from "./path";
-import { readImagesFromZip } from "./result";
 import type {
+  FetchLike,
   MinerUClient,
   MinerUClientOptions,
   MinerUParseMode,
-  ZipEntries,
 } from "./types";
-import { decodeText, readZipWithFileFallback } from "./zip";
 
-type LocalTaskResponse = {
-  task_id?: string;
-  taskId?: string;
-  status?: string;
-  message?: string;
-};
+/** 本地 MinerU API 版本：`v1` 为 MinerU 4.x，`legacy` 为 MinerU 3.x。 */
+export type LocalApiVersion = "v1" | "legacy";
 
-type LocalResultResponse = {
-  results?: Record<
-    string,
-    {
-      md_content?: string;
-      middle_json?: unknown;
-      content_list?: unknown;
-      images?: Record<string, string>;
-    }
-  >;
-};
+type LocalTaskState =
+  | { api: "v1"; fileID?: string; resultURL?: string }
+  | { api: "legacy" };
 
 /**
- * 创建本地 MinerU API client，负责提交异步任务和轮询任务状态。
+ * 创建本地 MinerU API client。提交前探测服务版本：
+ * MinerU 4.x 暴露 `/v1/health`，走 `/v1/tasks` JSON 任务流程；
+ * 否则回退到 MinerU 3.x 的 `/health` + multipart `/tasks` 流程。
  */
 export function createLocalMinerUClient(
   options: MinerUClientOptions & {
@@ -45,40 +47,31 @@ export function createLocalMinerUClient(
   const baseURL = normalizeBaseURL(options.localApiBaseURL);
   const request = options.fetch ?? createFormDataRequest();
   const readBinary = options.readBinary ?? readFileBytes;
+  const context = {
+    baseURL,
+    request,
+    mode: options.mode,
+    saveImages: options.saveImages !== false,
+  };
+  const tasks = new Map<string, LocalTaskState>();
+
+  const taskState = (taskID: string): LocalTaskState =>
+    tasks.get(taskID) ?? { api: "v1" };
 
   return {
     /**
-     * 检查本地服务健康状态后提交 PDF 解析任务。
+     * 检查本地服务健康状态和 API 版本后提交 PDF 解析任务。
      */
     async submitPdf(filePath) {
-      await requestOk(request, `${baseURL}/health`, "local-health", {
-        method: "GET",
-      });
+      const api = await detectLocalApiVersion(request, baseURL);
       const bytes = normalizeBinary(await readPdfBytes(readBinary, filePath));
-      const multipart = buildLocalTaskFormData({
-        filePath,
-        bytes,
-        mode: options.mode,
-        saveImages: options.saveImages !== false,
-      });
-      const response = await requestJson<LocalTaskResponse>(
-        request,
-        `${baseURL}/tasks`,
-        "local-submit",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": multipart.contentType,
-          },
-          body: multipart.body,
-        },
-      );
-      const taskID = response.task_id ?? response.taskId;
-      if (!taskID) {
-        throw new MinerUTaskError(
-          "Local MinerU submit response missing task_id",
-        );
+      if (api === "v1") {
+        const submitted = await submitV1LocalTask(context, bytes);
+        tasks.set(submitted.taskID, { api, fileID: submitted.fileID });
+        return { taskID: submitted.taskID };
       }
+      const taskID = await submitLegacyLocalTask(context, bytes, filePath);
+      tasks.set(taskID, { api });
       return { taskID };
     },
 
@@ -86,150 +79,61 @@ export function createLocalMinerUClient(
      * 轮询本地异步任务状态，并转换为统一任务状态。
      */
     async pollTask(taskID) {
-      const response = await requestJson<LocalTaskResponse>(
-        request,
-        `${baseURL}/tasks/${encodeURIComponent(taskID)}`,
-        "local-poll",
-        { method: "GET" },
-      );
-      const status = String(response.status ?? "").toLowerCase();
-      if (
-        ["done", "success", "succeeded", "finished", "completed"].includes(
-          status,
-        )
-      ) {
-        return { status: "succeeded" };
+      const state = taskState(taskID);
+      if (state.api === "legacy") {
+        return pollLegacyLocalTask(context, taskID);
       }
-      if (["failed", "fail", "error"].includes(status)) {
-        return {
-          status: "failed",
-          error: response.message || "Local MinerU task failed",
-        };
+      const { resultURL, ...status } = await pollV1LocalTask(context, taskID);
+      if (resultURL) {
+        tasks.set(taskID, { ...state, resultURL });
       }
-      return { status: "running" };
+      return status;
     },
 
     /**
      * 下载本地任务结果，并按 precise/lite 模式转换为统一结果。
      */
     async downloadResult(taskID) {
-      const response = await requestOk(
-        request,
-        `${baseURL}/tasks/${encodeURIComponent(taskID)}/result`,
-        "local-download",
-        { method: "GET" },
-      );
-      const contentType = response.headers.get("Content-Type") ?? "";
-      if (isZipResponse(contentType)) {
-        const zip = await readZipWithFileFallback(
-          await response.arrayBuffer(),
-          "mineru-local-result.zip",
-        );
-        const markdown = readLocalZipMarkdown(zip);
-        if (options.mode === "lite") {
-          return { kind: "lite", markdown };
-        }
-        return {
-          kind: "precise",
-          markdown,
-          rawResult: readLocalZipRawResult(zip),
-          images: readImagesFromZip(zip),
-        };
+      const state = taskState(taskID);
+      if (state.api === "legacy") {
+        return downloadLegacyLocalResult(context, taskID);
       }
-
-      const json = (await response.json()) as LocalResultResponse;
-      const result = firstLocalResult(json);
-      const markdown = result.md_content ?? "";
-      if (options.mode === "lite") {
-        return { kind: "lite", markdown };
-      }
-      return {
-        kind: "precise",
-        markdown,
-        rawResult: parseMaybeJson(
-          result.middle_json ?? result.content_list ?? json,
-        ),
-        images: decodeDataURLImages(result.images),
-      };
+      return downloadV1LocalResult(context, {
+        taskID,
+        fileID: state.fileID,
+        resultURL: state.resultURL,
+      });
     },
   };
 }
 
-function firstLocalResult(response: LocalResultResponse) {
-  return Object.values(response.results ?? {})[0] ?? {};
-}
-
-function parseMaybeJson(value: unknown): unknown {
-  if (typeof value !== "string") {
-    return value;
-  }
+/**
+ * 探测本地 MinerU 服务版本：`/v1/health` 可用即为 MinerU 4.x；
+ * 返回 404/405 时回退检查 MinerU 3.x 的 `/health`。
+ */
+export async function detectLocalApiVersion(
+  request: FetchLike,
+  baseURL: string,
+): Promise<LocalApiVersion> {
+  let response: Response;
   try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return value;
+    response = await request(`${baseURL}/v1/health`, { method: "GET" });
+  } catch (error) {
+    throw new MinerURequestError("local-health", 0, errorMessage(error));
   }
-}
-
-function decodeDataURLImages(
-  images: Record<string, string> | undefined,
-): { path: string; bytes: Uint8Array }[] | undefined {
-  if (!images) {
-    return undefined;
+  if (response.ok) {
+    return "v1";
   }
-  const decoded = Object.entries(images).flatMap(([path, value]) => {
-    const comma = value.indexOf(",");
-    if (comma === -1) {
-      return [];
-    }
-    const binary = decodeBase64(value.slice(comma + 1));
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return [{ path, bytes }];
+  if (response.status !== 404 && response.status !== 405) {
+    // 4.x 服务在模型未就绪时 `/v1/health` 返回 503，直接报告该状态。
+    throw new MinerURequestError(
+      "local-health",
+      response.status,
+      await responseErrorDetail(response),
+    );
+  }
+  await requestOk(request, `${baseURL}/health`, "local-health", {
+    method: "GET",
   });
-  return decoded.length > 0 ? decoded : undefined;
-}
-
-function decodeBase64(value: string): string {
-  const runtime = globalThis as typeof globalThis & {
-    atob?: (data: string) => string;
-    Buffer?: { from: (data: string, encoding: "base64") => Uint8Array };
-  };
-  if (runtime.atob) {
-    return runtime.atob(value);
-  }
-  const bytes = runtime.Buffer?.from(value, "base64");
-  if (!bytes) {
-    throw new MinerUTaskError("Cannot decode local MinerU image data");
-  }
-  return Array.from(bytes)
-    .map((byte) => String.fromCharCode(byte))
-    .join("");
-}
-
-function isZipResponse(contentType: string): boolean {
-  const normalized = contentType.toLowerCase();
-  return (
-    normalized.includes("application/zip") ||
-    normalized.includes("application/x-zip-compressed") ||
-    normalized.includes("application/octet-stream")
-  );
-}
-
-function readLocalZipMarkdown(zip: ZipEntries): string {
-  const entry = Array.from(zip.values()).find((item) =>
-    item.name.endsWith(".md"),
-  );
-  return entry ? decodeText(entry.bytes) : "";
-}
-
-function readLocalZipRawResult(zip: ZipEntries): unknown {
-  const entries = Array.from(zip.values());
-  const middle = entries.find((item) => item.name.endsWith("_middle.json"));
-  const content = entries.find((item) =>
-    item.name.endsWith("_content_list.json"),
-  );
-  const entry = middle ?? content;
-  return entry ? JSON.parse(decodeText(entry.bytes)) : {};
+  return "legacy";
 }

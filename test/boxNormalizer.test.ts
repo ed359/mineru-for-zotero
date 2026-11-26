@@ -538,4 +538,186 @@ describe("boxNormalizer", function () {
     assert.equal(boxes[4].formula, "E=mc^2");
     assert.equal(boxes[5].formula, "a+b");
   });
+
+  it("normalizes MinerU 4.x docvortex middle json with span content", function () {
+    const boxes = normalizeMinerUBoxes(mineru4MiddleFixture());
+
+    assert.deepEqual(
+      boxes.map((box) => [box.page, box.type]),
+      [
+        [1, "doc_title"],
+        [1, "text"],
+        [1, "footer"],
+        [2, "equation"],
+        [2, "image"],
+        [2, "image_body"],
+        [2, "image_caption"],
+        [2, "table"],
+        [2, "table_caption"],
+        [2, "table"],
+        [2, "code"],
+        [2, "code_body"],
+      ],
+    );
+    assert.equal(boxes[0].markdown, "Topographic VAEs");
+    assert.deepEqual(boxes[0].bbox, {
+      x: 0.25,
+      y: 0.125,
+      width: 0.5,
+      height: 0.125,
+    });
+    assert.equal(
+      boxes[1].markdown,
+      "The density is $\\pi /\\sqrt{18}$ , or approximately 0.74.",
+    );
+    assert.equal(
+      boxes[2].markdown,
+      "https://doi.org/10.1/x Published online, see [the paper](https://example.org/p)",
+    );
+    assert.equal(boxes[3].formula, "\\frac{a}{b}");
+    assert.equal(boxes[3].imagePath, "images/page_1_equation_1.jpg");
+    assert.equal(boxes[4].markdown, "");
+    assert.equal(boxes[4].imagePath, "images/page_1_image_2.jpg");
+    assert.equal(boxes[6].markdown, "Figure 1: Overview of $\\tau$ .");
+    assert.deepEqual(boxes[7].tableFormats, {
+      html: "<table><tr><td>a</td></tr></table>",
+    });
+    assert.equal(boxes[8].markdown, "Table 1: Results.");
+    assert.deepEqual(boxes[9].tableFormats, {
+      html: "<table><tr><td>a</td></tr></table>",
+    });
+    assert.equal(boxes[11].markdown, "x = 1\ny = 2");
+    assert.notInclude(
+      boxes.map((box) => box.markdown).join("\n"),
+      "[object Object]",
+    );
+  });
 });
+
+function mineru4MiddleFixture() {
+  const table = "<table><tr><td>a</td></tr></table>";
+  return {
+    schema: "docvortex.middle",
+    schema_version: "2.0",
+    extensions: {
+      docvortex_layout: {
+        version: 1,
+        pages: [{ page_idx: 0, width_pt: 612, height_pt: 792 }],
+      },
+    },
+    pages: [
+      {
+        page_idx: 0,
+        blocks: [
+          {
+            type: "doc_title",
+            index: 0,
+            bbox: [0.25, 0.125, 0.75, 0.25],
+            content: [{ type: "text", content: "Topographic VAEs" }],
+            level: 1,
+          },
+          {
+            type: "text",
+            index: 1,
+            bbox: [0.1, 0.2, 0.9, 0.3],
+            content: [
+              { type: "text", content: "The density is " },
+              { type: "equation_inline", content: "\\pi /\\sqrt{18}" },
+              { type: "text", content: " , or approximately " },
+              { type: "text", content: "0.74", styles: ["bold"] },
+              { type: "text", content: "." },
+            ],
+          },
+          {
+            type: "footer",
+            index: 2,
+            bbox: [0.01, 0.96, 0.6, 0.98],
+            content: [
+              {
+                type: "hyperlink",
+                url: "https://doi.org/10.1/x",
+                content: [{ type: "text", content: "https://doi.org/10.1/x" }],
+              },
+              { type: "text", content: " Published online, see " },
+              {
+                type: "hyperlink",
+                url: "https://example.org/p",
+                content: [{ type: "text", content: "the paper" }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        page_idx: 1,
+        blocks: [
+          {
+            type: "equation",
+            index: 0,
+            bbox: [0.4, 0.1, 0.6, 0.15],
+            image_path: "images/page_1_equation_1.jpg",
+            content: "\\frac{a}{b}",
+          },
+          {
+            type: "image",
+            index: 1,
+            bbox: [0.2, 0.2, 0.8, 0.5],
+            content: [
+              {
+                type: "image_body",
+                index: 2,
+                bbox: [0.2, 0.2, 0.8, 0.5],
+                image_path: "images/page_1_image_2.jpg",
+                content: "",
+              },
+              {
+                type: "image_caption",
+                index: 3,
+                bbox: [0.2, 0.51, 0.8, 0.55],
+                content: [
+                  { type: "text", content: "Figure 1: Overview of " },
+                  { type: "equation_inline", content: "\\tau" },
+                  { type: "text", content: " ." },
+                ],
+              },
+            ],
+          },
+          {
+            type: "table",
+            index: 4,
+            bbox: [0.2, 0.6, 0.8, 0.7],
+            content: [
+              {
+                type: "table_caption",
+                index: 5,
+                bbox: [0.2, 0.56, 0.8, 0.59],
+                content: [{ type: "text", content: "Table 1: Results." }],
+              },
+              {
+                type: "table_body",
+                index: 6,
+                bbox: [0.2, 0.6, 0.8, 0.7],
+                image_path: "images/page_1_table_6.jpg",
+                content: table,
+              },
+            ],
+          },
+          {
+            type: "code",
+            index: 7,
+            bbox: [0.1, 0.75, 0.5, 0.8],
+            content: [
+              {
+                type: "code_body",
+                index: 7,
+                bbox: [0.1, 0.75, 0.5, 0.8],
+                content: "x = 1\ny = 2",
+              },
+            ],
+            sub_type: "code",
+          },
+        ],
+      },
+    ],
+  };
+}
